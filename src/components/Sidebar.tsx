@@ -1,5 +1,7 @@
-import { LayoutDashboard, ShieldCheck, CreditCard, Settings, HelpCircle, LogOut } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, CreditCard, Settings, HelpCircle, LogOut, Send } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { auth } from '../firebase';
+import { signOut } from 'firebase/auth';
 
 interface SidebarProps {
   activeSection: string;
@@ -7,10 +9,18 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'vault', label: 'Document Vault', icon: ShieldCheck },
     { id: 'payment', label: 'Payment', icon: CreditCard },
+    { id: 'handoff', label: 'Solicitor Handoff', icon: Send },
   ];
 
   const secondaryItems = [
@@ -70,7 +80,10 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
       </nav>
 
       <div className="mt-auto pt-6 border-t border-white/10">
-        <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-red-400 transition-colors">
+        <button 
+          onClick={handleSignOut}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-red-400 transition-colors"
+        >
           <LogOut size={20} />
           <span className="font-medium">Sign Out</span>
         </button>

@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user information and vault progress.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique identifier for the user." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "displayName": { "type": "string", "description": "The user's full name." },
+        "vaultProgress": {
+          "type": "object",
+          "properties": {
+            "leasehold": { "type": "boolean" },
+            "safety": { "type": "boolean" },
+            "tenure": { "type": "boolean" },
+            "utilities": { "type": "boolean" },
+            "parking": { "type": "boolean" }
+          }
+        },
+        "vaultFiles": {
+          "type": "object",
+          "properties": {
+            "leasehold": { "type": "object", "properties": { "url": { "type": "string" }, "fileName": { "type": "string" } } },
+            "safety": { "type": "object", "properties": { "url": { "type": "string" }, "fileName": { "type": "string" } } },
+            "tenure": { "type": "object", "properties": { "url": { "type": "string" }, "fileName": { "type": "string" } } },
+            "utilities": { "type": "object", "properties": { "url": { "type": "string" }, "fileName": { "type": "string" } } },
+            "parking": { "type": "object", "properties": { "url": { "type": "string" }, "fileName": { "type": "string" } } }
+          }
+        },
+        "aiVerification": {
+          "type": "object",
+          "properties": {
+            "leasehold": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "verified", "failed"] }, "message": { "type": "string" } } },
+            "safety": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "verified", "failed"] }, "message": { "type": "string" } } },
+            "tenure": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "verified", "failed"] }, "message": { "type": "string" } } },
+            "utilities": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "verified", "failed"] }, "message": { "type": "string" } } },
+            "parking": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "verified", "failed"] }, "message": { "type": "string" } } }
+          }
+        },
+        "solicitorInfo": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "email": { "type": "string", "format": "email" },
+            "sentAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "paid"] },
+        "hasPaid": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "User profile and progress data."
+    }
+  }
+}

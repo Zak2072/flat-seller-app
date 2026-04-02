@@ -11,72 +11,174 @@ import {
   Building2,
   Key,
   Zap,
-  Car
+  Car,
+  Loader2
 } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { VaultSection } from './components/VaultSection';
+import { SolicitorHandoff } from './components/SolicitorHandoff';
+import { loadStripe } from '@stripe/stripe-js';
+
+const stripePromise = loadStripe((import.meta as any).env.VITE_STRIPE_PUBLISHABLE_KEY);
 import { ProgressBar } from './components/ProgressBar';
 import { cn } from './lib/utils';
-import type { AppState, VaultSectionId } from './types';
+import type { AppState, VaultSectionId, UserProfile } from './types';
+import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
+import { Auth } from './components/Auth';
+import ErrorBoundary from './components/ErrorBoundary';
+import { doc, updateDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage, handleFirestoreError, OperationType } from './firebase';
+import { validateDocument } from './services/geminiService';
 
-const INITIAL_SECTIONS: AppState['sections'] = [
+const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
   { 
     id: 'leasehold', 
     title: 'Leasehold Info (LPE1)', 
     description: 'Management information, service charges, and ground rent details.',
-    status: 'pending' 
   },
   { 
     id: 'safety', 
     title: 'Building Safety (BSA)', 
     description: 'EWS1 forms, fire risk assessments, and cladding status.',
-    status: 'pending' 
   },
   { 
     id: 'tenure', 
     title: 'Tenure & Title', 
     description: 'Land Registry documents and proof of ownership.',
-    status: 'pending' 
   },
   { 
     id: 'utilities', 
     title: 'Utilities & EPC', 
     description: 'Energy Performance Certificate and utility provider details.',
-    status: 'pending' 
   },
   { 
     id: 'parking', 
     title: 'Parking & Access', 
     description: 'Allocated spaces, permits, and access restrictions.',
-    status: 'pending' 
   },
 ];
 
-export default function App() {
+function MainApp() {
+  const { user, profile, loading } = useAuth();
   const [activeSection, setActiveSection] = useState('dashboard');
-  const [state, setState] = useState<AppState>({
-    sections: INITIAL_SECTIONS,
-    paymentStatus: 'unpaid',
-  });
 
-  const completedCount = state.sections.filter(s => s.status === 'completed').length;
-  const progress = (completedCount / state.sections.length) * 100;
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('payment') === 'success' && user) {
+      const updatePayment = async () => {
+        const userRef = doc(db, 'users', user.uid);
+        await updateDoc(userRef, {
+          paymentStatus: 'paid',
+          hasPaid: true
+        });
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      };
+      updatePayment();
+    }
+  }, [user]);
 
-  const handleUpload = (id: string, file: File) => {
-    setState(prev => ({
-      ...prev,
-      sections: prev.sections.map(s => 
-        s.id === id ? { ...s, status: 'completed', fileName: file.name } : s
-      )
-    }));
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <Loader2 className="animate-spin text-navy mx-auto" size={48} />
+          <p className="text-navy font-serif font-bold text-xl">Loading your secure vault...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !profile) {
+    return <Auth />;
+  }
+
+  const sections = INITIAL_SECTIONS.map(s => ({
+    ...s,
+    status: (profile.vaultProgress[s.id as VaultSectionId] ? 'completed' : 'pending') as 'pending' | 'completed',
+    fileName: profile.vaultFiles[s.id as VaultSectionId]?.fileName
+  }));
+
+  const completedCount = Object.values(profile.vaultProgress).filter(Boolean).length;
+  const progress = (completedCount / INITIAL_SECTIONS.length) * 100;
+
+  const handleUpload = async (id: string, file: File) => {
+    try {
+      // 1. Upload to Storage
+      const storageRef = ref(storage, `users/${user.uid}/vault/${id}/${file.name}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+
+      // 2. Update Firestore with file info and set AI status to pending
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        [`vaultFiles.${id}`]: {
+          url: downloadURL,
+          fileName: file.name
+        },
+        [`aiVerification.${id}`]: {
+          status: 'pending'
+        }
+      });
+
+      // 3. AI Validation
+      const section = INITIAL_SECTIONS.find(s => s.id === id);
+      const validation = await validateDocument(section?.title || id, file.name);
+
+      // 4. Update Firestore with AI result
+      await updateDoc(userRef, {
+        [`vaultProgress.${id}`]: validation.isValid,
+        [`aiVerification.${id}`]: {
+          status: validation.isValid ? 'verified' : 'failed',
+          message: validation.message
+        }
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+    }
   };
 
-  const handlePayment = () => {
-    // Mock Stripe payment
-    const confirm = window.confirm("Proceed to secure payment of £249.00?");
-    if (confirm) {
-      setState(prev => ({ ...prev, paymentStatus: 'paid' }));
-      alert("Payment successful. Your vault is now fully verified.");
+  const handleSolicitorHandoff = async (name: string, email: string) => {
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Update Firestore with solicitor info
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        solicitorInfo: {
+          name,
+          email,
+          sentAt: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+    }
+  };
+
+  const handlePayment = async () => {
+    try {
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: user.uid }),
+      });
+
+      const session = await response.json();
+      const stripe = await stripePromise;
+      
+      if (stripe && session.id) {
+        const { error } = await (stripe as any).redirectToCheckout({
+          sessionId: session.id,
+        });
+        if (error) console.error(error);
+      }
+    } catch (error) {
+      console.error('Payment Error:', error);
     }
   };
 
@@ -98,8 +200,8 @@ export default function App() {
                 <div>
                   <h2 className="text-4xl font-serif font-bold text-navy mb-2">Compliance Dashboard</h2>
                   <p className="text-slate-500 max-w-lg">
-                    Manage your Material Information requirements for a smooth flat sale. 
-                    Ensure all 'Vault' sections are complete to avoid delays.
+                    Welcome back, <span className="font-bold text-navy">{profile.displayName || profile.email}</span>. 
+                    Manage your Material Information requirements for a smooth flat sale.
                   </p>
                 </div>
                 <div className="text-right">
@@ -121,7 +223,7 @@ export default function App() {
                   </div>
                   <ProgressBar progress={progress} />
                   <div className="mt-8 grid grid-cols-5 gap-2">
-                    {state.sections.map((s, i) => (
+                    {sections.map((s, i) => (
                       <div 
                         key={s.id} 
                         className={cn(
@@ -132,7 +234,7 @@ export default function App() {
                     ))}
                   </div>
                   <p className="mt-6 text-sm text-slate-500 italic">
-                    {completedCount} of {state.sections.length} critical documents uploaded.
+                    {completedCount} of {sections.length} critical documents uploaded.
                   </p>
                 </div>
 
@@ -149,15 +251,15 @@ export default function App() {
                   </div>
                   <button
                     onClick={handlePayment}
-                    disabled={state.paymentStatus === 'paid'}
+                    disabled={profile.paymentStatus === 'paid'}
                     className={cn(
                       "w-full py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2",
-                      state.paymentStatus === 'paid' 
+                      profile.paymentStatus === 'paid' 
                         ? "bg-green-500/20 text-green-400 cursor-default" 
                         : "bg-white text-navy hover:bg-slate-100 active:scale-95"
                     )}
                   >
-                    {state.paymentStatus === 'paid' ? (
+                    {profile.paymentStatus === 'paid' ? (
                       <><CheckCircle2 size={20} /> Paid & Verified</>
                     ) : (
                       <><CreditCard size={20} /> Pay with Stripe</>
@@ -177,7 +279,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {state.sections.slice(0, 3).map(section => (
+                  {sections.slice(0, 3).map(section => (
                     <div key={section.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                       <div className={cn(
                         "p-3 rounded-lg",
@@ -214,15 +316,30 @@ export default function App() {
                 </p>
               </header>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {state.sections.map(section => (
-                  <VaultSection 
-                    key={section.id} 
-                    section={section} 
-                    onUpload={handleUpload} 
-                  />
-                ))}
-              </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {sections.map(section => (
+                    <VaultSection 
+                      key={section.id} 
+                      section={section} 
+                      onUpload={handleUpload}
+                      aiStatus={profile.aiVerification[section.id as VaultSectionId]}
+                    />
+                  ))}
+                </div>
+            </motion.div>
+          )}
+
+          {activeSection === 'handoff' && (
+            <motion.div
+              key="handoff"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+            >
+              <SolicitorHandoff 
+                profile={profile} 
+                onSend={handleSolicitorHandoff} 
+              />
             </motion.div>
           )}
 
@@ -269,15 +386,15 @@ export default function App() {
 
                 <button
                   onClick={handlePayment}
-                  disabled={state.paymentStatus === 'paid'}
+                  disabled={profile.paymentStatus === 'paid'}
                   className={cn(
                     "w-full py-5 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-3 shadow-lg",
-                    state.paymentStatus === 'paid'
+                    profile.paymentStatus === 'paid'
                       ? "bg-green-500 text-white cursor-default"
                       : "bg-navy text-white hover:bg-navy-light active:scale-95"
                   )}
                 >
-                  {state.paymentStatus === 'paid' ? (
+                  {profile.paymentStatus === 'paid' ? (
                     <><CheckCircle2 size={24} /> Payment Confirmed</>
                   ) : (
                     <><Lock size={20} /> Pay £249.00 with Stripe</>
@@ -293,5 +410,15 @@ export default function App() {
         </AnimatePresence>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <FirebaseProvider>
+        <MainApp />
+      </FirebaseProvider>
+    </ErrorBoundary>
   );
 }
