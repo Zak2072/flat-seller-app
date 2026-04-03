@@ -10,13 +10,14 @@ import {
   Loader2, 
   FileCheck,
   ExternalLink,
-  CreditCard
+  CreditCard,
+  HelpCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { UserProfile } from '../types';
+import type { PropertyProfile } from '../types';
 
 interface SolicitorHandoffProps {
-  profile: UserProfile;
+  profile: PropertyProfile;
   onSend: (name: string, email: string) => Promise<void>;
 }
 
@@ -25,9 +26,10 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
   const [email, setEmail] = useState(profile.solicitorInfo?.email || '');
   const [isSending, setIsSending] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
   const completedCount = Object.values(profile.vaultProgress).filter(Boolean).length;
-  const isVaultComplete = completedCount === 5;
+  const isVaultComplete = profile.vaultProgress.team && profile.vaultProgress.forms && profile.vaultProgress.money && profile.vaultProgress.safety;
   const isPaid = profile.hasPaid;
   const isUnlocked = isVaultComplete && isPaid;
   const alreadySent = !!profile.solicitorInfo?.sentAt;
@@ -48,18 +50,37 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
     }
   };
 
+  const stepLabels: Record<string, string> = {
+    team: 'Step 1: Stakeholders',
+    forms: 'Step 2: The Forms',
+    money: 'Step 3: The Money',
+    safety: 'Step 4: The Safety'
+  };
+
+  const shareLink = profile.solicitorInfo?.shareId 
+    ? `${window.location.origin}?shareId=${profile.solicitorInfo.shareId}`
+    : '';
+
+  const copyToClipboard = () => {
+    if (shareLink) {
+      navigator.clipboard.writeText(shareLink);
+      // Using a simple alert for now as per existing pattern, but making it punchier
+      alert('Link copied!');
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold text-navy tracking-tight">Solicitor Handoff</h2>
+          <h2 className="text-3xl font-serif font-bold text-navy tracking-tight">Step 5: The Handoff</h2>
           <p className="text-slate-500 mt-2">Securely transfer your verified Material Information pack to your legal team.</p>
         </div>
         <div className="flex gap-2">
           {!isVaultComplete && (
             <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-700 rounded-full border border-amber-100 text-sm font-medium">
               <Lock size={16} />
-              Vault: {completedCount}/5
+              Steps: {completedCount}/4
             </div>
           )}
           {!isPaid && (
@@ -83,13 +104,13 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
             <h3 className="text-lg font-serif font-semibold text-navy mb-4 flex items-center gap-2">
               <FileCheck size={20} className="text-navy" />
-              Pack Contents
+              Pathway Progress
             </h3>
             <ul className="space-y-3">
-              {Object.entries(profile.vaultProgress).map(([id, completed]) => (
+              {Object.keys(stepLabels).map((id) => (
                 <li key={id} className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600 capitalize">{id.replace(/([A-Z])/g, ' $1').trim()}</span>
-                  {completed ? (
+                  <span className="text-slate-600">{stepLabels[id]}</span>
+                  {profile.vaultProgress[id as any] ? (
                     <CheckCircle2 size={16} className="text-green-500" />
                   ) : (
                     <div className="w-4 h-4 rounded-full border border-slate-300" />
@@ -99,12 +120,12 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
             </ul>
             <div className="mt-6 pt-6 border-t border-slate-100 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-navy">Vault Progress</span>
+                <span className="text-sm font-medium text-navy">Preparation Status</span>
                 <span className={cn(
                   "text-xs font-bold px-2 py-0.5 rounded uppercase",
                   isVaultComplete ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
                 )}>
-                  {isVaultComplete ? 'Complete' : `${completedCount}/5`}
+                  {isVaultComplete ? 'Complete' : `${completedCount}/4`}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -184,14 +205,16 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Documents to be sent</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {Object.entries(profile.vaultFiles).map(([id, file]) => (
-                    file && (
-                      <div key={id} className="flex items-center gap-2 text-xs text-slate-600 bg-white p-2 rounded border border-slate-100">
+                  {Object.entries(profile.vaultFiles).flatMap(([id, fileData]) => {
+                    if (!fileData) return [];
+                    const files = Array.isArray(fileData) ? fileData : [fileData];
+                    return files.map((file, idx) => (
+                      <div key={`${id}-${idx}`} className="flex items-center gap-2 text-xs text-slate-600 bg-white p-2 rounded border border-slate-100">
                         <FileCheck size={12} className="text-green-500" />
                         <span className="truncate">{file.fileName}</span>
                       </div>
-                    )
-                  ))}
+                    ));
+                  })}
                 </div>
               </div>
 
@@ -224,9 +247,54 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
               </button>
 
               {alreadySent && (
-                <p className="text-center text-xs text-slate-400">
-                  Sent on {new Date(profile.solicitorInfo?.sentAt || '').toLocaleDateString()} at {new Date(profile.solicitorInfo?.sentAt || '').toLocaleTimeString()}
-                </p>
+                <div className="space-y-4">
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl space-y-3">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-bold text-green-800 uppercase tracking-widest">Solicitor View</p>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'solicitorView' ? null : 'solicitorView')}
+                          className="text-gold hover:text-navy transition-colors"
+                        >
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'solicitorView' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">This is a secure, read-only link. Send it to your solicitor so they can download your full pack in one go.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        readOnly 
+                        value={shareLink}
+                        className="flex-1 px-3 py-2 bg-white border border-green-200 rounded-lg text-xs text-slate-600 outline-none"
+                      />
+                      <button 
+                        onClick={copyToClipboard}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-bold hover:bg-green-700 transition-all"
+                      >
+                        Copy Link
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-green-600 italic">
+                      Share this unique, non-guessable URL with your solicitor for read-only access to your pack.
+                    </p>
+                  </div>
+                  <p className="text-center text-xs text-slate-400">
+                    Sent on {new Date(profile.solicitorInfo?.sentAt || '').toLocaleDateString()} at {new Date(profile.solicitorInfo?.sentAt || '').toLocaleTimeString()}
+                  </p>
+                </div>
               )}
             </form>
           </div>
@@ -246,7 +314,7 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, onS
               <CheckCircle2 size={24} />
             </div>
             <div>
-              <p className="font-bold">Pack Sent Successfully</p>
+              <p className="font-bold">Prepped Seller Pack Sent</p>
               <p className="text-sm text-green-100">Your solicitor has been notified via secure link.</p>
             </div>
           </motion.div>

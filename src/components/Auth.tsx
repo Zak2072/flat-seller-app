@@ -95,7 +95,7 @@ export function Auth() {
           <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <ShieldCheck className="text-navy" size={32} />
           </div>
-          <h1 className="text-3xl font-serif font-bold tracking-tight">VAULT</h1>
+          <h1 className="text-3xl font-serif font-bold tracking-tight uppercase">Prepped Seller</h1>
           <p className="text-slate-300 text-sm mt-2 uppercase tracking-widest">Material Information Compliance</p>
         </div>
 
@@ -105,7 +105,7 @@ export function Auth() {
               {isLogin ? 'Welcome Back' : 'Create Account'}
             </h2>
             <p className="text-slate-500 text-sm mt-1">
-              {isLogin ? 'Sign in to access your vault' : 'Start your compliance journey'}
+              {isLogin ? 'Sign in to access your vault' : 'Start your flat sale prep'}
             </p>
           </div>
 
@@ -134,7 +134,7 @@ export function Auth() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
-                  placeholder="david@exela.co.uk"
+                  placeholder="david@preppedseller.co.uk"
                 />
               </div>
             </div>

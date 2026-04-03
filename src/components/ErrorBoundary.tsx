@@ -53,7 +53,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
               onClick={() => window.location.reload()}
               className="w-full py-4 bg-navy text-white rounded-xl font-bold hover:bg-navy-light active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg"
             >
-              <RefreshCcw size={20} /> Reload Application
+              <RefreshCcw size={20} /> Reload App
             </button>
             <p className="text-xs text-slate-400 flex items-center justify-center gap-2">
               <ShieldCheck size={14} /> Secure Vault Protection Active

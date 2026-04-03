@@ -26,7 +26,7 @@ async function startServer() {
             price_data: {
               currency: "gbp",
               product_data: {
-                name: "EXELA Limited - Material Information Verification",
+                name: "Prepped Seller - Material Information Verification",
                 description: "One-time fee for legal document verification and vault hosting.",
               },
               unit_amount: 24900, // £249.00

@@ -16,7 +16,10 @@ export async function validateDocument(category: string, fileName: string): Prom
       The user has uploaded a file named "${fileName}" for the category "${category}".
       
       Does this file name and category combination appear to be a valid legal document for this purpose?
-      For example, an LPE1 form should be in the 'Leasehold Info' category.
+      
+      Special instructions:
+      - If category is 'management_articles' and the file name suggests 'Articles of Association', the message MUST be: 'Articles found. This confirms the rules for your Management Company.'
+      - For 'ground_rent_receipt', 'reserve_fund_confirmation', 'asbestos_survey', 'eicr', 'headlease', and 'transfer_fees', provide a professional confirmation message.
       
       Return a JSON object with:
       - isValid: boolean

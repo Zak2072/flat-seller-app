@@ -1,4 +1,25 @@
-export type VaultSectionId = 'leasehold' | 'safety' | 'tenure' | 'utilities' | 'parking';
+export type VaultSectionId = 
+  | 'team' 
+  | 'forms' 
+  | 'money' 
+  | 'safety' 
+  | 'handoff'
+  | 'ta6'
+  | 'ta7'
+  | 'ta10'
+  | 'sc_accounts'
+  | 'sc_budget'
+  | 'fra'
+  | 'insurance'
+  | 'bsa'
+  | 'solicitor_forms'
+  | 'ground_rent_receipt'
+  | 'reserve_fund_confirmation'
+  | 'asbestos_survey'
+  | 'eicr'
+  | 'headlease'
+  | 'management_articles'
+  | 'transfer_fees';
 
 export interface VaultSection {
   id: VaultSectionId;
@@ -8,20 +29,38 @@ export interface VaultSection {
   fileName?: string;
 }
 
-export interface UserProfile {
-  uid: string;
-  email: string;
-  displayName?: string;
-  vaultProgress: Record<VaultSectionId, boolean>;
-  vaultFiles: Record<VaultSectionId, { url: string; fileName: string } | null>;
-  aiVerification: Record<VaultSectionId, { status: 'pending' | 'verified' | 'failed'; message?: string } | null>;
+export type PropertyStatus = 'Active' | 'Sold';
+
+export interface PropertyProfile {
+  id: string;
+  address: string;
+  status: PropertyStatus;
+  teamInfo?: {
+    groundLeaseHolder: string;
+    managementCompany: string;
+    managingAgent: string;
+  };
+  financialInfo?: {
+    reserveFundAmount: string;
+  };
+  vaultProgress: Partial<Record<VaultSectionId, boolean>>;
+  vaultFiles: Record<string, any>;
+  aiVerification: Record<string, any>;
   solicitorInfo?: {
     name: string;
     email: string;
     sentAt?: string;
+    shareId?: string;
   };
   paymentStatus: 'unpaid' | 'paid';
   hasPaid: boolean;
+  createdAt: string;
+}
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName?: string;
   createdAt?: string;
 }
 

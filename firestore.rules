@@ -12,11 +12,18 @@ service cloud.firestore {
     //   - email: string (required, format: email) - User's email
     //   - displayName: string (optional) - User's name
     //   - vaultProgress: map (optional) - Progress flags
-    //     - leasehold: boolean
+    //     - team: boolean
+    //     - forms: boolean
+    //     - money: boolean
     //     - safety: boolean
-    //     - tenure: boolean
-    //     - utilities: boolean
-    //     - parking: boolean
+    //     - handoff: boolean
+    //     - ground_rent_receipt: boolean
+    //     - reserve_fund_confirmation: boolean
+    //     - asbestos_survey: boolean
+    //     - eicr: boolean
+    //     - headlease: boolean
+    //     - management_articles: boolean
+    //     - transfer_fees: boolean
     //   - paymentStatus: string (optional, enum: ['unpaid', 'paid'])
     //   - createdAt: timestamp (optional)
     //
@@ -37,6 +44,11 @@ service cloud.firestore {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
     function hasOnlyAllowedFields(fields) {
       return request.resource.data.keys().hasOnly(fields);
     }
@@ -45,43 +57,50 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'vaultProgress', 'vaultFiles', 'aiVerification', 'solicitorInfo', 'paymentStatus', 'hasPaid', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'createdAt']) &&
              data.uid is string && data.uid == request.auth.uid &&
              isValidEmail(data.email) &&
-             (data.displayName == null || (data.displayName is string && data.displayName.size() < 100)) &&
+             (data.displayName == null || (data.displayName is string && data.displayName.size() < 100));
+    }
+
+    function isValidProperty(data) {
+      return hasOnlyAllowedFields(['id', 'address', 'status', 'vaultProgress', 'vaultFiles', 'aiVerification', 'solicitorInfo', 'teamInfo', 'paymentStatus', 'hasPaid', 'createdAt', 'updatedAt']) &&
+             data.id is string &&
+             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
+             data.status in ['Active', 'Sold'] &&
              (data.paymentStatus == null || data.paymentStatus in ['unpaid', 'paid']) &&
              (data.hasPaid is bool) &&
+             (data.vaultProgress is map) &&
+             (data.vaultFiles is map) &&
+             (data.aiVerification is map) &&
+             (data.teamInfo == null || (
+               data.teamInfo.groundLandlord is string &&
+               data.teamInfo.managementCompany is string &&
+               data.teamInfo.managingAgent is string
+             )) &&
              (data.solicitorInfo == null || (
                data.solicitorInfo.name is string &&
                isValidEmail(data.solicitorInfo.email) &&
-               (data.solicitorInfo.sentAt == null || isValidDateString(data.solicitorInfo.sentAt))
-             )) &&
-             (data.aiVerification == null || data.aiVerification is map);
+               (data.solicitorInfo.sentAt == null || isValidDateString(data.solicitorInfo.sentAt)) &&
+               (data.solicitorInfo.shareId == null || data.solicitorInfo.shareId is string)
+             ));
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
     match /users/{userId} {
-      // Users can only read their own profile (PII protection)
       allow read: if isOwner(userId);
-      
-      // Users can only create/update their own profile with valid data
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
-                      (
-                        !('solicitorInfo' in request.resource.data) || 
-                        (
-                          request.resource.data.vaultProgress.leasehold == true &&
-                          request.resource.data.vaultProgress.safety == true &&
-                          request.resource.data.vaultProgress.tenure == true &&
-                          request.resource.data.vaultProgress.utilities == true &&
-                          request.resource.data.vaultProgress.parking == true
-                        )
-                      );
-      
-      // No one can delete user profiles
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
       allow delete: if false;
+
+      match /properties/{propertyId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidProperty(request.resource.data);
+        allow update: if isOwner(userId) && isValidProperty(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
     }
 
     // Default deny
