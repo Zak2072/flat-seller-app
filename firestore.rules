@@ -11,21 +11,29 @@ service cloud.firestore {
     //   - uid: string (required) - User's unique ID
     //   - email: string (required, format: email) - User's email
     //   - displayName: string (optional) - User's name
-    //   - vaultProgress: map (optional) - Progress flags
-    //     - team: boolean
-    //     - forms: boolean
-    //     - money: boolean
-    //     - safety: boolean
-    //     - handoff: boolean
-    //     - ground_rent_receipt: boolean
-    //     - reserve_fund_confirmation: boolean
-    //     - asbestos_survey: boolean
-    //     - eicr: boolean
-    //     - headlease: boolean
-    //     - management_articles: boolean
-    //     - transfer_fees: boolean
-    //   - paymentStatus: string (optional, enum: ['unpaid', 'paid'])
-    //   - createdAt: timestamp (optional)
+    //   - role: string (optional, enum: ['admin', 'user', 'client'])
+    //   - createdAt: string (optional, ISO 8601)
+    //
+    // Collection: properties
+    // Document ID: {propertyId}
+    // Fields:
+    //   - id: string (required)
+    //   - address: string (required)
+    //   - status: string (required, enum: ['Active', 'Sold'])
+    //   - uprn: string (optional)
+    //   - epc_rating: string (optional)
+    //   - total_floor_area: number (optional)
+    //   - property_metadata: map (optional)
+    //   - vaultProgress: map (required)
+    //   - vaultFiles: map (required)
+    //   - aiVerification: map (required)
+    //   - teamInfo: map (optional)
+    //   - financialInfo: map (optional)
+    //   - solicitorInfo: map (optional)
+    //   - paymentStatus: string (required, enum: ['pending', 'paid'])
+    //   - hasPaid: boolean (required)
+    //   - createdAt: string (required, ISO 8601)
+    //   - updatedAt: string (optional, ISO 8601)
     //
     // ===============================================================
 
@@ -38,6 +46,12 @@ service cloud.firestore {
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
     function isValidEmail(email) {
@@ -57,50 +71,46 @@ service cloud.firestore {
     // Domain Validators
     // ===============================================================
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'createdAt', 'role']) &&
              data.uid is string && data.uid == request.auth.uid &&
              isValidEmail(data.email) &&
-             (data.displayName == null || (data.displayName is string && data.displayName.size() < 100));
+             (data.displayName == null || (data.displayName is string && data.displayName.size() < 100)) &&
+             (data.role == null || data.role in ['admin', 'user', 'client']) &&
+             (data.createdAt == null || isValidDateString(data.createdAt));
     }
 
     function isValidProperty(data) {
-      return hasOnlyAllowedFields(['id', 'address', 'status', 'vaultProgress', 'vaultFiles', 'aiVerification', 'solicitorInfo', 'teamInfo', 'paymentStatus', 'hasPaid', 'createdAt', 'updatedAt']) &&
-             data.id is string &&
+      return data.id is string &&
              data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
              data.status in ['Active', 'Sold'] &&
-             (data.paymentStatus == null || data.paymentStatus in ['unpaid', 'paid']) &&
-             (data.hasPaid is bool) &&
-             (data.vaultProgress is map) &&
-             (data.vaultFiles is map) &&
-             (data.aiVerification is map) &&
-             (data.teamInfo == null || (
-               data.teamInfo.groundLandlord is string &&
-               data.teamInfo.managementCompany is string &&
-               data.teamInfo.managingAgent is string
-             )) &&
-             (data.solicitorInfo == null || (
-               data.solicitorInfo.name is string &&
-               isValidEmail(data.solicitorInfo.email) &&
-               (data.solicitorInfo.sentAt == null || isValidDateString(data.solicitorInfo.sentAt)) &&
-               (data.solicitorInfo.shareId == null || data.solicitorInfo.shareId is string)
-             ));
+             data.paymentStatus in ['pending', 'paid'] &&
+             data.hasPaid is bool &&
+             (data.createdAt == null || isValidDateString(data.createdAt));
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
     match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data);
-      allow delete: if false;
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (isAdmin() || (isOwner(userId) && request.resource.data.role == 'client'));
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])));
+      allow delete: if isAdmin();
 
       match /properties/{propertyId} {
-        allow read: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidProperty(request.resource.data);
-        allow update: if isOwner(userId) && isValidProperty(request.resource.data);
-        allow delete: if isOwner(userId);
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if isOwner(userId);
+        allow delete: if isOwner(userId) || isAdmin();
       }
+    }
+
+    match /shared_links/{shareId} {
+      allow read: if resource != null && 
+                  request.time < timestamp.date(timestamp.value(resource.data.expiresAt));
+      allow create: if isAuthenticated();
     }
 
     // Default deny

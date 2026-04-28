@@ -25,34 +25,8 @@ interface LandingPageProps {
 export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
   return (
     <div className="min-h-screen bg-white font-sans text-slate-900 overflow-x-hidden">
-      {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-slate-100 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-navy rounded-lg flex items-center justify-center shadow-lg">
-              <ShieldCheck className="text-white" size={24} />
-            </div>
-            <span className="text-2xl font-serif font-bold tracking-tight text-navy">Prepped Seller</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={onStart}
-              className="text-navy font-bold text-sm hover:underline"
-            >
-              Login
-            </button>
-            <button 
-              onClick={onStart}
-              className="bg-navy text-white px-6 py-2.5 rounded-full font-bold text-sm hover:bg-navy-light transition-all shadow-md active:scale-95"
-            >
-              Get Prepped
-            </button>
-          </div>
-        </div>
-      </nav>
-
       {/* Hero Section */}
-      <section className="pt-40 pb-24 px-6 relative overflow-hidden">
+      <section className="pt-24 pb-24 px-6 relative overflow-hidden">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full -z-10">
           <div className="absolute top-20 left-10 w-64 h-64 bg-navy/5 rounded-full blur-3xl" />
           <div className="absolute bottom-20 right-10 w-96 h-96 bg-gold/5 rounded-full blur-3xl" />
@@ -75,7 +49,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
                 onClick={onStart}
                 className="w-full sm:w-auto bg-navy text-white px-10 py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-navy-light transition-all shadow-xl hover:shadow-navy/20"
               >
-                Get Prepped - £249
+                Get Prepped - £50 + VAT
                 <ArrowRight size={20} />
               </button>
               <a href="#problem" className="text-navy font-bold hover:underline flex items-center gap-2 px-6 py-4">
@@ -111,7 +85,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
                   <div>
                     <h4 className="text-xl font-bold text-navy mb-2">The waiting loop</h4>
                     <p className="text-slate-600 leading-relaxed">
-                      This creates a waiting loop. You wait for the agent, the agent waits for the landlord, and the whole chain stalls. Many sales fail because people simply run out of patience.
+                      This creates a waiting loop. You wait for the agent, the agent waits for the landlord and the whole chain stalls. Many sales fail because people simply run out of patience.
                     </p>
                   </div>
                 </div>
@@ -214,14 +188,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
                   One simple payment gives you full access to the assistant and your secure document vault.
                 </p>
                 <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 mb-10">
-                  <span className="text-4xl font-bold">£249</span>
+                  <span className="text-4xl font-bold">£50 + VAT</span>
                   <span className="text-navy-light ml-2">one-off payment</span>
                 </div>
                 <button 
                   onClick={onStart}
                   className="w-full bg-white text-navy px-8 py-5 rounded-2xl font-bold text-lg hover:bg-slate-100 transition-all shadow-xl active:scale-95 flex items-center justify-center gap-3"
                 >
-                  Get Prepped - £249
+                  Get Prepped - £50 + VAT
                   <ArrowRight size={20} />
                 </button>
               </div>

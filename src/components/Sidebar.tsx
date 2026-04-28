@@ -50,7 +50,7 @@ export function Sidebar({ activeSection, onSectionChange, profile, onBackToPrope
   ];
 
   return (
-    <div className="w-64 bg-navy h-screen fixed left-0 top-0 text-white flex flex-col p-6 border-r border-navy-light shadow-2xl z-50 overflow-y-auto">
+    <div className="w-64 bg-navy h-[calc(100vh-4rem)] fixed left-0 top-16 text-white flex flex-col p-6 border-r border-navy-light shadow-2xl z-50 overflow-y-auto">
       <div className="mb-8 flex items-center gap-3">
         <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0">
           <ShieldCheck className="text-navy" size={20} />

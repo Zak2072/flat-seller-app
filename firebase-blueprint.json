@@ -61,11 +61,47 @@
             "shareId": { "type": "string" }
           }
         },
-        "paymentStatus": { "type": "string", "enum": ["unpaid", "paid"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid"] },
         "hasPaid": { "type": "boolean" },
+        "ta6Data": {
+          "type": "object",
+          "properties": {
+            "boundaries": { "type": "string" },
+            "disputes": {
+              "type": "object",
+              "properties": {
+                "hasDisputes": { "type": "boolean" },
+                "details": { "type": "string" }
+              }
+            },
+            "planning": {
+              "type": "object",
+              "properties": {
+                "hasPlanning": { "type": "boolean" },
+                "details": { "type": "string" }
+              }
+            },
+            "guarantees": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "address", "status"]
+    },
+    "SharedLink": {
+      "title": "Shared Link",
+      "description": "Securely shared property data for solicitors.",
+      "type": "object",
+      "properties": {
+        "shareId": { "type": "string" },
+        "payload": { "type": "object" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["shareId", "payload", "expiresAt", "createdAt"]
     }
   },
   "firestore": {
@@ -76,6 +112,10 @@
     "/users/{uid}/properties/{propertyId}": {
       "schema": "Property",
       "description": "Property-specific data and vault progress."
+    },
+    "/shared_links/{shareId}": {
+      "schema": "SharedLink",
+      "description": "Publicly accessible secure links for solicitors."
     }
   }
 }

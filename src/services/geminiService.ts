@@ -19,7 +19,7 @@ export async function validateDocument(category: string, fileName: string): Prom
       
       Special instructions:
       - If category is 'management_articles' and the file name suggests 'Articles of Association', the message MUST be: 'Articles found. This confirms the rules for your Management Company.'
-      - For 'ground_rent_receipt', 'reserve_fund_confirmation', 'asbestos_survey', 'eicr', 'headlease', and 'transfer_fees', provide a professional confirmation message.
+      - For 'ground_rent_receipt', 'reserve_fund_confirmation', 'asbestos_survey', 'eicr', 'headlease' and 'transfer_fees', provide a professional confirmation message.
       
       Return a JSON object with:
       - isValid: boolean

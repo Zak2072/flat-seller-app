@@ -10,8 +10,9 @@ interface AuthContextType {
   properties: PropertyProfile[];
   currentProperty: PropertyProfile | null;
   loading: boolean;
+  isAdmin: boolean;
   isAuthReady: boolean;
-  addProperty: (address: string) => Promise<string>;
+  addProperty: (address: string, details?: Partial<PropertyProfile>) => Promise<string>;
   updateProperty: (propertyId: string, data: Partial<PropertyProfile>) => Promise<void>;
   deleteProperty: (propertyId: string) => Promise<void>;
   markAsSold: (propertyId: string) => Promise<void>;
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   properties: [],
   currentProperty: null,
   loading: true,
+  isAdmin: false,
   isAuthReady: false,
   addProperty: async () => '',
   updateProperty: async () => {},
@@ -40,7 +42,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [properties, setProperties] = useState<PropertyProfile[]>([]);
   const [currentPropertyId, setCurrentPropertyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    setIsAdmin(profile?.role === 'admin');
+  }, [profile]);
 
   const currentProperty = properties.find(p => p.id === currentPropertyId) || null;
 
@@ -59,55 +66,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsAuthReady(true);
-      
-      if (currentUser) {
-        const userRef = doc(db, 'users', currentUser.uid);
-        
-        // Check if profile exists, if not create it
-        try {
-          const docSnap = await getDoc(userRef);
-          if (!docSnap.exists()) {
-            const newProfile: UserProfile = {
-              uid: currentUser.uid,
-              email: currentUser.email || '',
-              displayName: currentUser.displayName || '',
-              createdAt: new Date().toISOString(),
-            };
-            await setDoc(userRef, newProfile);
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, `users/${currentUser.uid}`);
-        }
-
-        // Listen for profile changes
-        const unsubscribeProfile = onSnapshot(userRef, (snapshot) => {
-          if (snapshot.exists()) {
-            setProfile(snapshot.data() as UserProfile);
-          }
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-        });
-
-        // Listen for properties
-        const propertiesRef = collection(db, 'users', currentUser.uid, 'properties');
-        const q = query(propertiesRef, orderBy('createdAt', 'desc'));
-        const unsubscribeProperties = onSnapshot(q, (snapshot) => {
-          const props = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PropertyProfile));
-          setProperties(props);
-          setLoading(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}/properties`);
-          setLoading(false);
-        });
-
-        return () => {
-          unsubscribeProfile();
-          unsubscribeProperties();
-        };
-      } else {
+      if (!currentUser) {
         setProfile(null);
         setProperties([]);
         setLoading(false);
@@ -117,7 +79,67 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => unsubscribeAuth();
   }, []);
 
-  const addProperty = async (address: string) => {
+  useEffect(() => {
+    if (!user) return;
+
+    const userRef = doc(db, 'users', user.uid);
+    
+    // Check if profile exists, if not create it
+    const checkProfile = async () => {
+      try {
+        const docSnap = await getDoc(userRef);
+        if (!docSnap.exists()) {
+          const newProfile: UserProfile = {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || '',
+            role: 'client',
+            createdAt: new Date().toISOString(),
+          };
+          await setDoc(userRef, newProfile);
+        }
+      } catch (error) {
+        // Only log if it's not a permission error during logout transition
+        if (auth.currentUser) {
+          handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+        }
+      }
+    };
+
+    checkProfile();
+
+    // Listen for profile changes
+    const unsubscribeProfile = onSnapshot(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setProfile(snapshot.data() as UserProfile);
+      }
+    }, (error) => {
+      if (auth.currentUser) {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      }
+    });
+
+    // Listen for properties
+    const propertiesRef = collection(db, 'users', user.uid, 'properties');
+    const q = query(propertiesRef, orderBy('createdAt', 'desc'));
+    const unsubscribeProperties = onSnapshot(q, (snapshot) => {
+      const props = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PropertyProfile));
+      setProperties(props);
+      setLoading(false);
+    }, (error) => {
+      if (auth.currentUser) {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}/properties`);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribeProfile();
+      unsubscribeProperties();
+    };
+  }, [user]);
+
+  const addProperty = async (address: string, details?: Partial<PropertyProfile>) => {
     if (!user) throw new Error('User not authenticated');
     
     const propertiesRef = collection(db, 'users', user.uid, 'properties');
@@ -127,6 +149,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const newProperty: PropertyProfile = {
       id: propertyId,
       address,
+      addressLine1: details?.addressLine1 || '',
+      addressLine2: details?.addressLine2 || '',
+      town: details?.town || '',
+      postcode: details?.postcode || '',
       status: 'Active',
       vaultProgress: {
         team: false,
@@ -142,12 +168,14 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         managementCompany: '',
         managingAgent: ''
       },
-      paymentStatus: 'unpaid',
-      hasPaid: false,
       createdAt: new Date().toISOString(),
+      ...details,
+      paymentStatus: 'pending',
+      hasPaid: false,
     };
 
     try {
+      console.log("Attempting to save property payload:", newProperty);
       await setDoc(propertyDoc, newProperty);
       return propertyId;
     } catch (error) {
@@ -190,6 +218,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       properties, 
       currentProperty, 
       loading, 
+      isAdmin,
       isAuthReady,
       addProperty,
       updateProperty,

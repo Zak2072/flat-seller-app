@@ -19,8 +19,12 @@ import {
   ShieldAlert,
   Send,
   MapPin,
-  ChevronLeft
+  ChevronLeft,
+  Hash
 } from 'lucide-react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Glossary } from './pages/Glossary';
+import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { VaultSection } from './components/VaultSection';
 import { StepContent } from './components/StepContent';
@@ -28,6 +32,8 @@ import { SolicitorHandoff } from './components/SolicitorHandoff';
 import { SolicitorView } from './components/SolicitorView';
 import { LandingPage } from './components/LandingPage';
 import { PropertiesList } from './components/PropertiesList';
+import { PaymentGate } from './components/PaymentGate';
+import { calculatePrice } from './lib/pricing';
 import { loadStripe } from '@stripe/stripe-js';
 
 const stripePromise = loadStripe((import.meta as any).env.VITE_STRIPE_PUBLISHABLE_KEY);
@@ -37,7 +43,7 @@ import type { AppState, VaultSectionId, UserProfile, PropertyProfile } from './t
 import { FirebaseProvider, useAuth } from './components/FirebaseProvider';
 import { Auth } from './components/Auth';
 import ErrorBoundary from './components/ErrorBoundary';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, auth, handleFirestoreError, OperationType } from './firebase';
 import { validateDocument } from './services/geminiService';
@@ -46,12 +52,12 @@ const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
   { 
     id: 'team', 
     title: 'Step 1: Stakeholders', 
-    description: 'Ground Lease Holder, Management Company, and Managing Agent details.',
+    description: 'Ground Lease Holder, Management Company and Managing Agent details.',
   },
   { 
     id: 'forms', 
     title: 'Step 2: The Forms', 
-    description: 'Law Society TA6, TA7, and TA10 forms.',
+    description: 'Law Society TA6, TA7 and TA10 forms.',
   },
   { 
     id: 'money', 
@@ -61,7 +67,7 @@ const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
   { 
     id: 'safety', 
     title: 'Step 4: The Safety', 
-    description: 'Fire Risk Assessment, Insurance, and BSA 2022 documents.',
+    description: 'Fire Risk Assessment, Insurance and BSA 2022 documents.',
   },
   { 
     id: 'handoff', 
@@ -73,16 +79,14 @@ const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
 function MainApp() {
   const { user, profile, properties, currentProperty, loading, setCurrentPropertyId, updateProperty } = useAuth();
   const [activeSection, setActiveSection] = useState('dashboard');
-  const [showAuth, setShowAuth] = useState(false);
-  const [shareId, setShareId] = useState<string | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Handle shareId detection synchronously to bypass auth guards immediately
+  const urlParams = new URLSearchParams(location.search);
+  const shareId = urlParams.get('shareId');
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const sid = urlParams.get('shareId');
-    if (sid) {
-      setShareId(sid);
-    }
-    
     if (urlParams.get('payment') === 'success' && user && currentProperty) {
       const updatePayment = async () => {
         await updateProperty(currentProperty.id, {
@@ -94,7 +98,7 @@ function MainApp() {
       };
       updatePayment();
     }
-  }, [user, currentProperty]);
+  }, [user, currentProperty, location.search]);
 
   if (shareId) {
     return <SolicitorView shareId={shareId} />;
@@ -111,20 +115,26 @@ function MainApp() {
     );
   }
 
+  // Handle Landing Page Route
+  if (location.pathname === '/') {
+    return <LandingPage onStart={() => {
+      if (user) navigate('/properties');
+      else navigate('/auth');
+    }} />;
+  }
+
   if (!user || !profile) {
-    return showAuth ? (
-      <div className="relative">
+    return (
+      <div className="relative pt-16">
         <button 
-          onClick={() => setShowAuth(false)}
-          className="absolute top-8 left-8 z-50 flex items-center gap-2 text-navy font-bold hover:underline"
+          onClick={() => navigate('/')}
+          className="absolute top-24 left-8 z-50 flex items-center gap-2 text-navy font-bold hover:underline"
         >
           <ArrowRight className="rotate-180" size={18} />
           Back to Guide
         </button>
         <Auth />
       </div>
-    ) : (
-      <LandingPage onStart={() => setShowAuth(true)} />
     );
   }
 
@@ -149,6 +159,13 @@ function MainApp() {
   const completedCount = Object.values(currentProperty.vaultProgress).filter(Boolean).length;
   const progress = (completedCount / INITIAL_SECTIONS.length) * 100;
 
+  const paidPropertiesCount = properties.filter(p => p.paymentStatus === 'paid').length;
+  const { totalPrice } = calculatePrice(paidPropertiesCount);
+
+  // Routing Interceptor: Redirect to payment if unpaid and trying to access steps
+  const isStepSection = ['team', 'forms', 'money', 'safety', 'handoff'].includes(activeSection);
+  const effectiveSection = (isStepSection && currentProperty.paymentStatus === 'pending') ? 'payment' : activeSection;
+
   const handleTeamUpdate = async (data: { groundLeaseHolder: string; managementCompany: string; managingAgent: string }) => {
     try {
       await updateProperty(currentProperty.id, {
@@ -164,6 +181,42 @@ function MainApp() {
     try {
       await updateProperty(currentProperty.id, {
         financialInfo: data
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
+    }
+  };
+
+  const handleTA6Update = async (data: any) => {
+    if (!currentProperty) return;
+    console.log("App.tsx: handleTA6Update called with:", data);
+    try {
+      await updateProperty(currentProperty.id, {
+        ta6Data: data
+      });
+      console.log("App.tsx: TA6 update successful");
+    } catch (error) {
+      console.error("App.tsx: TA6 update failed:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
+    }
+  };
+
+  const handleTA7Update = async (data: any) => {
+    if (!currentProperty) return;
+    try {
+      await updateProperty(currentProperty.id, {
+        ta7Data: data
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
+    }
+  };
+
+  const handleTA10Update = async (data: any) => {
+    if (!currentProperty) return;
+    try {
+      await updateProperty(currentProperty.id, {
+        ta10Data: data
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
@@ -196,12 +249,18 @@ function MainApp() {
       const allFiles = [...existingFileList, ...newUploadedFiles];
 
       // 2. Update Firestore
-      await updateProperty(currentProperty.id, {
+      const updateData: any = {
         [`vaultFiles.${id}`]: allFiles.length > 1 ? allFiles : allFiles[0],
         [`aiVerification.${id}`]: {
           status: 'pending'
         }
-      } as any);
+      };
+
+      if (id === 'lpe1' && allFiles.length > 0) {
+        updateData['lpe1Data.fileUrl'] = allFiles[0].url;
+      }
+
+      await updateProperty(currentProperty.id, updateData);
 
       // 3. AI Validation feedback
       let aiMessage = `Verified: ${allFiles.length} files uploaded.`;
@@ -214,6 +273,7 @@ function MainApp() {
         if (validation.isValid) {
           if (id === 'sc_budget') aiMessage = `Verified: ${currentYear} Budget matches service charge enquiries.`;
           else if (id === 'ta6') aiMessage = 'Verified: TA6 form is fully completed and signed.';
+          else if (id === 'lpe1') aiMessage = 'Verified: LPE1 Management Pack is complete and signed by the Managing Agent.';
           else if (id === 'fra') aiMessage = 'Verified: Fire Risk Assessment is current and valid.';
           else aiMessage = `Verified: ${allFiles[0].fileName} matches requirements.`;
         } else {
@@ -234,8 +294,8 @@ function MainApp() {
       const updatedVaultProgress = { ...currentProperty.vaultProgress, [id]: true };
       
       let stepId: VaultSectionId | null = null;
-      if (['ta6', 'ta7', 'ta10'].includes(id)) {
-        const formsComplete = updatedVaultProgress.ta6 && updatedVaultProgress.ta7 && updatedVaultProgress.ta10;
+      if (['ta6', 'ta7', 'ta10', 'lpe1'].includes(id)) {
+        const formsComplete = updatedVaultProgress.ta6 && updatedVaultProgress.ta7 && updatedVaultProgress.ta10 && updatedVaultProgress.lpe1;
         if (formsComplete) stepId = 'forms';
       } else if (['sc_accounts', 'sc_budget', 'ground_rent_receipt', 'reserve_fund_confirmation'].includes(id)) {
         const moneyComplete = updatedVaultProgress.sc_accounts && 
@@ -282,18 +342,27 @@ function MainApp() {
     }
   };
 
-  const handleSolicitorHandoff = async (name: string, email: string) => {
+  const handleSolicitorHandoff = async (data: { 
+    name: string; 
+    email: string; 
+    practiceName: string; 
+    phone: string; 
+    address: string;
+    payload: any;
+    shareId: string;
+  }) => {
     try {
-      // Generate a unique, non-guessable share ID
-      const shareId = crypto.randomUUID();
-
-      // Update Firestore with solicitor info and share ID
+      // Update Property with solicitor info and the provided share ID
+      // The shared_links document is now handled by the component before download
       await updateProperty(currentProperty.id, {
         solicitorInfo: {
-          name,
-          email,
+          name: data.name,
+          email: data.email,
+          practiceName: data.practiceName,
+          phone: data.phone,
+          address: data.address,
           sentAt: new Date().toISOString(),
-          shareId
+          shareId: data.shareId
         }
       });
     } catch (error) {
@@ -322,31 +391,25 @@ function MainApp() {
   };
 
   const handlePayment = async () => {
-    try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userId: user.uid, propertyId: currentProperty.id }),
-      });
+    if (!currentProperty) return;
 
-      const session = await response.json();
-      const stripe = await stripePromise;
+    try {
+      // Mock payment: direct Firestore update to bypass Stripe in preview
+      await updateProperty(currentProperty.id, {
+        paymentStatus: 'paid',
+        hasPaid: true
+      });
       
-      if (stripe && session.id) {
-        const { error } = await (stripe as any).redirectToCheckout({
-          sessionId: session.id,
-        });
-        if (error) console.error(error);
-      }
+      // Success routing: automatically navigate to Step 1
+      setActiveSection('team');
     } catch (error) {
-      console.error('Payment Error:', error);
+      // Error handling: log for security rule rejections
+      console.error('Mock Payment Error:', error);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col pt-16">
       <div className="flex flex-1">
         <Sidebar 
           activeSection={activeSection} 
@@ -357,7 +420,7 @@ function MainApp() {
         
         <main className="flex-1 ml-64 p-12 max-w-6xl mx-auto">
           <AnimatePresence mode="wait">
-            {activeSection === 'dashboard' && (
+            {effectiveSection === 'dashboard' && (
             <motion.div
               key="dashboard"
               initial={{ opacity: 0, x: 20 }}
@@ -367,9 +430,23 @@ function MainApp() {
             >
               <header className="flex justify-between items-end border-b border-slate-200 pb-8">
                 <div>
-                  <div className="flex items-center gap-2 text-gold font-bold text-xs uppercase tracking-widest mb-2">
-                    <MapPin size={14} />
-                    {currentProperty.address}
+                  <div className="flex items-center gap-4 text-gold font-bold text-xs uppercase tracking-widest mb-2">
+                    <div className="flex items-center gap-1">
+                      <MapPin size={14} />
+                      {currentProperty.address}
+                    </div>
+                    {currentProperty.uprn && (
+                      <div className="flex items-center gap-1 border-l border-slate-200 pl-4">
+                        <Hash size={14} />
+                        UPRN: {currentProperty.uprn}
+                      </div>
+                    )}
+                    {currentProperty.epc_rating && (
+                      <div className="flex items-center gap-1 border-l border-slate-200 pl-4">
+                        <Zap size={14} />
+                        EPC: {currentProperty.epc_rating}
+                      </div>
+                    )}
                   </div>
                   <h2 className="text-4xl font-serif font-bold text-navy mb-2">Property Vault</h2>
                   <p className="text-slate-500 max-w-lg">
@@ -420,7 +497,7 @@ function MainApp() {
                     <p className="text-slate-300 text-sm mb-6">
                       One-time fee for legal document verification and vault hosting for this property.
                     </p>
-                    <p className="text-3xl font-bold mb-8">£249.00</p>
+                    <p className="text-3xl font-bold mb-8">£{totalPrice.toFixed(2)}</p>
                   </div>
                   <button
                     onClick={handlePayment}
@@ -480,39 +557,56 @@ function MainApp() {
             </motion.div>
           )}
 
-          {['team', 'forms', 'money', 'safety'].includes(activeSection) && (
+          {['team', 'forms', 'money', 'safety'].includes(effectiveSection) && (
             <motion.div
-              key={activeSection}
+              key={effectiveSection}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               className="space-y-8"
             >
               <header className="border-b border-slate-200 pb-8">
-                <div className="flex items-center gap-2 text-gold font-bold text-[10px] uppercase tracking-[0.2em] mb-2">
-                  <MapPin size={12} />
-                  {currentProperty.address}
+                <div className="flex items-center gap-4 text-gold font-bold text-[10px] uppercase tracking-[0.2em] mb-2">
+                  <div className="flex items-center gap-1">
+                    <MapPin size={12} />
+                    {currentProperty.address}
+                  </div>
+                  {currentProperty.uprn && (
+                    <div className="flex items-center gap-1 border-l border-slate-200 pl-3">
+                      <Hash size={12} />
+                      UPRN: {currentProperty.uprn}
+                    </div>
+                  )}
+                  {currentProperty.epc_rating && (
+                    <div className="flex items-center gap-1 border-l border-slate-200 pl-3">
+                      <Zap size={12} />
+                      EPC: {currentProperty.epc_rating}
+                    </div>
+                  )}
                 </div>
                 <h2 className="text-4xl font-serif font-bold text-navy mb-2">
-                  {INITIAL_SECTIONS.find(s => s.id === activeSection)?.title}
+                  {INITIAL_SECTIONS.find(s => s.id === effectiveSection)?.title}
                 </h2>
                 <p className="text-slate-500">
-                  {INITIAL_SECTIONS.find(s => s.id === activeSection)?.description}
+                  {INITIAL_SECTIONS.find(s => s.id === effectiveSection)?.description}
                 </p>
               </header>
-
+ 
               <StepContent 
-                id={activeSection as VaultSectionId}
+                id={effectiveSection as VaultSectionId}
                 profile={currentProperty as any}
                 onUpload={handleUpload}
                 onDeleteFile={handleDeleteFile}
                 onTeamUpdate={handleTeamUpdate}
                 onFinancialUpdate={handleFinancialUpdate}
+                onTA6Update={handleTA6Update}
+                onTA7Update={handleTA7Update}
+                onTA10Update={handleTA10Update}
               />
             </motion.div>
           )}
 
-          {activeSection === 'handoff' && (
+          {effectiveSection === 'handoff' && (
             <motion.div
               key="handoff"
               initial={{ opacity: 0, x: 20 }}
@@ -520,83 +614,41 @@ function MainApp() {
               exit={{ opacity: 0, x: -20 }}
             >
               <header className="border-b border-slate-200 pb-8 mb-8">
-                <div className="flex items-center gap-2 text-gold font-bold text-[10px] uppercase tracking-[0.2em] mb-2">
-                  <MapPin size={12} />
-                  {currentProperty.address}
+                <div className="flex items-center gap-4 text-gold font-bold text-[10px] uppercase tracking-[0.2em] mb-2">
+                  <div className="flex items-center gap-1">
+                    <MapPin size={12} />
+                    {currentProperty.address}
+                  </div>
+                  {currentProperty.uprn && (
+                    <div className="flex items-center gap-1 border-l border-slate-200 pl-3">
+                      <Hash size={12} />
+                      UPRN: {currentProperty.uprn}
+                    </div>
+                  )}
+                  {currentProperty.epc_rating && (
+                    <div className="flex items-center gap-1 border-l border-slate-200 pl-3">
+                      <Zap size={12} />
+                      EPC: {currentProperty.epc_rating}
+                    </div>
+                  )}
                 </div>
               </header>
               <SolicitorHandoff 
                 profile={currentProperty as any} 
+                sellerName={profile?.displayName}
                 onSend={handleSolicitorHandoff} 
               />
             </motion.div>
           )}
 
-          {activeSection === 'payment' && (
-            <motion.div
-              key="payment"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="max-w-2xl mx-auto text-center space-y-8 py-12"
-            >
-              <div className="w-20 h-20 bg-navy/5 text-navy rounded-full flex items-center justify-center mx-auto mb-8">
-                <CreditCard size={40} />
-              </div>
-              <h2 className="text-4xl font-serif font-bold text-navy">Secure Payment</h2>
-              <p className="text-slate-500 text-lg">
-                To finalise the Material Information pack for <span className="text-navy font-bold">{currentProperty.address}</span>, 
-                a verification fee of £249.00 is required.
-              </p>
-              
-              <div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-xl space-y-8">
-                <div className="flex justify-between items-center text-left border-b border-slate-100 pb-6">
-                  <div>
-                    <p className="font-bold text-navy text-xl">Vault Verification Pack</p>
-                    <p className="text-slate-500 text-sm">Includes legal review & hosting</p>
-                  </div>
-                  <p className="text-2xl font-bold text-navy">£249.00</p>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 text-slate-600 text-sm">
-                    <CheckCircle2 size={18} className="text-green-500" />
-                    <span>Solicitor-approved document check</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-slate-600 text-sm">
-                    <CheckCircle2 size={18} className="text-green-500" />
-                    <span>Secure digital vault for 12 months</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-slate-600 text-sm">
-                    <CheckCircle2 size={18} className="text-green-500" />
-                    <span>Instant sharing with estate agents</span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handlePayment}
-                  disabled={currentProperty.paymentStatus === 'paid'}
-                  className={cn(
-                    "w-full py-5 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-3 shadow-lg",
-                    currentProperty.paymentStatus === 'paid'
-                      ? "bg-green-500 text-white cursor-default"
-                      : "bg-navy text-white hover:bg-navy-light active:scale-95"
-                  )}
-                >
-                  {currentProperty.paymentStatus === 'paid' ? (
-                    <><CheckCircle2 size={24} /> Payment Confirmed</>
-                  ) : (
-                    <><Lock size={20} /> Pay £249.00 with Stripe</>
-                  )}
-                </button>
-                
-                <p className="text-xs text-slate-400 flex items-center justify-center gap-2">
-                  <ShieldCheck size={14} /> Securely processed by Stripe. No card details stored.
-                </p>
-              </div>
-            </motion.div>
+          {effectiveSection === 'payment' && (
+            <PaymentGate 
+              property={currentProperty}
+              paidPropertiesCount={paidPropertiesCount}
+              onProceed={handlePayment}
+            />
           )}
-          {activeSection === 'settings' && (
+          {effectiveSection === 'settings' && (
             <motion.div
               key="settings"
               initial={{ opacity: 0, x: 20 }}
@@ -644,8 +696,25 @@ export default function App() {
   return (
     <ErrorBoundary>
       <FirebaseProvider>
-        <MainApp />
+        <BrowserRouter>
+          <AppContent />
+        </BrowserRouter>
       </FirebaseProvider>
     </ErrorBoundary>
+  );
+}
+
+function AppContent() {
+  const location = useLocation();
+  const shareId = new URLSearchParams(location.search).get('shareId');
+
+  return (
+    <>
+      {!shareId && <Navbar />}
+      <Routes>
+        <Route path="/glossary" element={<Glossary />} />
+        <Route path="*" element={<MainApp />} />
+      </Routes>
+    </>
   );
 }

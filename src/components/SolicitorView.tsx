@@ -10,7 +10,7 @@ import {
   Lock,
   Download
 } from 'lucide-react';
-import { collection, query, where, getDocs, collectionGroup } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { PropertyProfile, VaultSectionId } from '../types';
 import { cn } from '../lib/utils';
@@ -25,21 +25,39 @@ export const SolicitorView: React.FC<SolicitorViewProps> = ({ shareId }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchProfile = async () => {
+    const fetchProfileData = async () => {
       try {
-        // Use collectionGroup to find the property with the matching shareId across all users
-        const propertiesRef = collectionGroup(db, 'properties');
-        const q = query(propertiesRef, where('solicitorInfo.shareId', '==', shareId));
-        const querySnapshot = await getDocs(q);
+        const linkRef = doc(db, 'shared_links', shareId);
+        const linkDoc = await getDoc(linkRef);
 
-        if (querySnapshot.empty) {
-          setError('Invalid or expired secure link.');
+        if (!linkDoc.exists()) {
+          setError('Access Denied: Secure pack not found.');
           setLoading(false);
           return;
         }
 
-        const propertyData = querySnapshot.docs[0].data() as PropertyProfile;
-        setProfile(propertyData);
+        const data = linkDoc.data();
+        const expiresAt = new Date(data.expiresAt);
+        const now = new Date();
+
+        if (now > expiresAt) {
+          setError('Access Denied: This secure link has expired.');
+          setLoading(false);
+          return;
+        }
+
+        // Reconstruct PropertyProfile-like object from payload
+        const payload = data.payload;
+        const reconstructedProfile = {
+          ...payload.propertyProfile,
+          vaultFiles: payload.evidence,
+          solicitorInfo: {
+            sentAt: payload.propertyProfile.sharedAt,
+            ...payload.solicitorDetails
+          }
+        } as PropertyProfile;
+
+        setProfile(reconstructedProfile);
       } catch (err) {
         console.error('Error fetching solicitor view:', err);
         setError('Failed to load secure view. Please try again later.');
@@ -48,7 +66,7 @@ export const SolicitorView: React.FC<SolicitorViewProps> = ({ shareId }) => {
       }
     };
 
-    fetchProfile();
+    fetchProfileData();
   }, [shareId]);
 
   if (loading) {
@@ -74,6 +92,20 @@ export const SolicitorView: React.FC<SolicitorViewProps> = ({ shareId }) => {
           <p className="text-xs text-slate-400">
             For security reasons, this link may have been revoked or is no longer valid.
           </p>
+          <div className="pt-4 flex flex-col gap-3">
+            <a 
+              href="/"
+              className="w-full py-3 bg-navy text-white rounded-xl font-bold hover:bg-navy-light transition-all shadow-lg text-center"
+            >
+              Return Home
+            </a>
+            <button 
+              onClick={() => window.location.href = '/auth'}
+              className="text-navy font-bold hover:underline"
+            >
+              Log In as Property Owner
+            </button>
+          </div>
         </div>
       </div>
     );
