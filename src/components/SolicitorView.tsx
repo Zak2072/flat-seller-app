@@ -159,10 +159,14 @@ export const SolicitorView: React.FC<SolicitorViewProps> = ({ shareId }) => {
             <h3 className="text-2xl font-serif font-bold text-navy flex items-center gap-3">
               <Users size={24} /> Stakeholders
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-1">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ground Lease Holder</p>
-                <p className="text-navy font-medium">{profile.teamInfo.groundLeaseHolder}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Freeholder</p>
+                <p className="text-navy font-medium">{profile.teamInfo.freeholderName}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Freeholder Agent</p>
+                <p className="text-navy font-medium">{profile.teamInfo.freeholderAgent}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Management Company</p>
@@ -181,6 +185,58 @@ export const SolicitorView: React.FC<SolicitorViewProps> = ({ shareId }) => {
                 </div>
               </div>
             )}
+          </section>
+        )}
+
+        {/* Building Safety Act section */}
+        {(profile.bsa_compliance || profile.landlordCertificateUrl || profile.bsaCertificateUrl) && (
+          <section className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+            <h3 className="text-2xl font-serif font-bold text-navy flex items-center gap-3">
+              <ShieldAlert size={24} className="text-gold" /> Building Safety Act (BSA)
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[
+                { 
+                  label: 'Landlord Certificate', 
+                  url: profile.landlordCertificateUrl || profile.bsa_compliance?.landlordCertificateUrl,
+                  status: profile.bsa_compliance?.landlord_certificate_status || (profile.landlordCertificateUrl ? 'Provided' : 'Missing')
+                },
+                { 
+                  label: 'Leaseholder Deed of Certificate', 
+                  url: profile.bsaCertificateUrl || profile.bsa_compliance?.bsaCertificateUrl,
+                  status: profile.bsa_compliance?.bsa_deed_status || (profile.bsaCertificateUrl ? 'Provided' : 'Missing')
+                }
+              ].map((doc, idx) => (
+                <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-xl group hover:border-navy transition-all">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center text-navy shadow-sm">
+                      <FileText size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-navy truncate">{doc.label}</p>
+                      <p className={cn(
+                        "text-[10px] uppercase font-bold tracking-widest",
+                        doc.url ? "text-green-600" : "text-amber-600"
+                      )}>
+                        {doc.status}
+                      </p>
+                    </div>
+                  </div>
+                  {doc.url && (
+                    <a 
+                      href={doc.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="p-2 text-navy hover:bg-navy hover:text-white rounded-lg transition-all"
+                      title="Download Document"
+                    >
+                      <Download size={20} />
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
           </section>
         )}
 

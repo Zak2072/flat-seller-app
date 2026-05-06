@@ -32,7 +32,7 @@ export function Auth() {
             window.localStorage.removeItem('emailForSignIn');
           })
           .catch((err: any) => {
-            setError(err.message);
+            setError(getErrorMessage(err));
           })
           .finally(() => {
             setLoading(false);
@@ -40,6 +40,28 @@ export function Auth() {
       }
     }
   }, []);
+
+  const getErrorMessage = (err: any) => {
+    const code = err.code;
+    switch (code) {
+      case 'auth/invalid-credential':
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+        return 'Invalid email or password. Please check your credentials and try again.';
+      case 'auth/email-already-in-use':
+        return 'An account with this email already exists.';
+      case 'auth/weak-password':
+        return 'Password should be at least 6 characters.';
+      case 'auth/invalid-email':
+        return 'Please enter a valid email address.';
+      case 'auth/user-disabled':
+        return 'This account has been disabled.';
+      case 'auth/too-many-requests':
+        return 'Too many attempts. Please try again later.';
+      default:
+        return err.message?.replace(/Firebase/gi, 'Authentication') || 'An unexpected error occurred. Please try again.';
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +76,7 @@ export function Auth() {
         await createUserWithEmailAndPassword(auth, email, password);
       }
     } catch (err: any) {
-      setError(err.message);
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -78,7 +100,7 @@ export function Auth() {
       window.localStorage.setItem('emailForSignIn', email);
       setMessage('Magic link sent! Check your inbox.');
     } catch (err: any) {
-      setError(err.message);
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }

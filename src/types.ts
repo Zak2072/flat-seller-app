@@ -4,6 +4,7 @@ export type VaultSectionId =
   | 'money' 
   | 'safety' 
   | 'handoff'
+  | 'postSale'
   | 'ta6'
   | 'ta7'
   | 'ta10'
@@ -41,9 +42,12 @@ export interface PropertyProfile {
   postcode?: string;
   status: PropertyStatus;
   teamInfo?: {
-    groundLeaseHolder: string;
+    freeholderName: string;
+    freeholderAgent: string;
     managementCompany: string;
     managingAgent: string;
+    mortgageLender?: string;
+    mortgageAccountNumber?: string;
   };
   financialInfo?: {
     reserveFundAmount: string;
@@ -62,6 +66,16 @@ export interface PropertyProfile {
   };
   paymentStatus: 'pending' | 'paid';
   hasPaid: boolean;
+  landlordCertificateUrl?: string;
+  bsaCertificateUrl?: string;
+  bsa_compliance?: {
+    freeholder_name: string | null;
+    freeholder_agent: string | null;
+    landlord_certificate_status: string;
+    bsa_deed_status: string;
+    landlordCertificateUrl: string | null;
+    bsaCertificateUrl: string | null;
+  };
   ta6Data?: {
     boundaries: string;
     disputes: {
@@ -209,6 +223,10 @@ export interface PropertyProfile {
   epc_rating?: string;
   total_floor_area?: number;
   property_metadata?: any;
+  postSaleTracking?: {
+    licenceToAssignStatus: 'Not Started' | 'Drafted by Buyer' | 'Pending Agent Approval' | 'Executed';
+    deedOfCovenantStatus: 'Not Started' | 'Drafted by Buyer' | 'Pending Agent Approval' | 'Executed';
+  };
   createdAt: string;
 }
 

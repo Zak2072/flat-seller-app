@@ -20,7 +20,8 @@ import {
   Send,
   MapPin,
   ChevronLeft,
-  Hash
+  Hash,
+  Signature
 } from 'lucide-react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Glossary } from './pages/Glossary';
@@ -30,13 +31,10 @@ import { VaultSection } from './components/VaultSection';
 import { StepContent } from './components/StepContent';
 import { SolicitorHandoff } from './components/SolicitorHandoff';
 import { SolicitorView } from './components/SolicitorView';
-import { LandingPage } from './components/LandingPage';
 import { PropertiesList } from './components/PropertiesList';
+import { PaymentSuccess } from './pages/PaymentSuccess';
 import { PaymentGate } from './components/PaymentGate';
 import { calculatePrice } from './lib/pricing';
-import { loadStripe } from '@stripe/stripe-js';
-
-const stripePromise = loadStripe((import.meta as any).env.VITE_STRIPE_PUBLISHABLE_KEY);
 import { ProgressBar } from './components/ProgressBar';
 import { cn } from './lib/utils';
 import type { AppState, VaultSectionId, UserProfile, PropertyProfile } from './types';
@@ -48,16 +46,18 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, auth, handleFirestoreError, OperationType } from './firebase';
 import { validateDocument } from './services/geminiService';
 
+import { DeleteConfirmationModal } from './components/DeleteConfirmationModal';
+
 const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
   { 
     id: 'team', 
     title: 'Step 1: Stakeholders', 
-    description: 'Ground Lease Holder, Management Company and Managing Agent details.',
+    description: 'Freeholder, Management Company and Managing Agent details.',
   },
   { 
     id: 'forms', 
     title: 'Step 2: The Forms', 
-    description: 'Law Society TA6, TA7 and TA10 forms.',
+    description: 'Law Society TA6, TA7, TA10 forms and BSA compliance.',
   },
   { 
     id: 'money', 
@@ -67,17 +67,23 @@ const INITIAL_SECTIONS: Omit<AppState['sections'][0], 'status'>[] = [
   { 
     id: 'safety', 
     title: 'Step 4: The Safety', 
-    description: 'Fire Risk Assessment, Insurance and BSA 2022 documents.',
+    description: 'Fire Risk Assessment and Insurance documents.',
   },
   { 
     id: 'handoff', 
     title: 'Step 5: The Handoff', 
     description: 'Send your prepped pack to your solicitor.',
   },
+  { 
+    id: 'postSale', 
+    title: 'Step 6: Post-Sale', 
+    description: 'Track legal dependencies after the sale is agreed.',
+  },
 ];
 
-function MainApp() {
-  const { user, profile, properties, currentProperty, loading, setCurrentPropertyId, updateProperty } = useAuth();
+function MainApp({ isSidebarOpen, setIsSidebarOpen }: { isSidebarOpen: boolean, setIsSidebarOpen: (o: boolean) => void }) {
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const { user, profile, properties, currentProperty, loading, setCurrentPropertyId, updateProperty, deleteAccount } = useAuth();
   const [activeSection, setActiveSection] = useState('dashboard');
   const location = useLocation();
   const navigate = useNavigate();
@@ -115,37 +121,15 @@ function MainApp() {
     );
   }
 
-  // Handle Landing Page Route
-  if (location.pathname === '/') {
-    return <LandingPage onStart={() => {
-      if (user) navigate('/properties');
-      else navigate('/auth');
-    }} />;
-  }
-
   if (!user || !profile) {
     return (
-      <div className="relative pt-16">
-        <button 
-          onClick={() => navigate('/')}
-          className="absolute top-24 left-8 z-50 flex items-center gap-2 text-navy font-bold hover:underline"
-        >
-          <ArrowRight className="rotate-180" size={18} />
-          Back to Guide
-        </button>
+      <div className="relative pt-16 min-h-screen bg-slate-50">
         <Auth />
       </div>
     );
   }
 
-  if (!currentProperty) {
-    return <PropertiesList onPropertySelected={(id) => {
-      setCurrentPropertyId(id);
-      setActiveSection('team');
-    }} />;
-  }
-
-  const sections = INITIAL_SECTIONS.map(s => ({
+  const sections = currentProperty ? INITIAL_SECTIONS.map(s => ({
     ...s,
     status: (currentProperty.vaultProgress[s.id as VaultSectionId] ? 'completed' : 'pending') as 'pending' | 'completed',
     fileName: (() => {
@@ -154,19 +138,26 @@ function MainApp() {
       if (Array.isArray(fileData)) return fileData.map(f => f.fileName).join(', ');
       return fileData.fileName;
     })()
-  }));
+  })) : [];
 
-  const completedCount = Object.values(currentProperty.vaultProgress).filter(Boolean).length;
-  const progress = (completedCount / INITIAL_SECTIONS.length) * 100;
+  const completedCount = currentProperty ? Object.values(currentProperty.vaultProgress).filter(Boolean).length : 0;
+  const progress = currentProperty ? (completedCount / INITIAL_SECTIONS.length) * 100 : 0;
 
   const paidPropertiesCount = properties.filter(p => p.paymentStatus === 'paid').length;
   const { totalPrice } = calculatePrice(paidPropertiesCount);
 
   // Routing Interceptor: Redirect to payment if unpaid and trying to access steps
-  const isStepSection = ['team', 'forms', 'money', 'safety', 'handoff'].includes(activeSection);
+  const isStepSection = ['team', 'forms', 'money', 'safety', 'handoff', 'postSale'].includes(activeSection);
   const effectiveSection = (isStepSection && currentProperty.paymentStatus === 'pending') ? 'payment' : activeSection;
 
-  const handleTeamUpdate = async (data: { groundLeaseHolder: string; managementCompany: string; managingAgent: string }) => {
+  const handleTeamUpdate = async (data: { 
+    freeholderName: string; 
+    freeholderAgent: string; 
+    managementCompany: string;
+    managingAgent: string;
+    mortgageLender?: string;
+    mortgageAccountNumber?: string;
+  }) => {
     try {
       await updateProperty(currentProperty.id, {
         teamInfo: data,
@@ -184,6 +175,16 @@ function MainApp() {
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await deleteAccount();
+      navigate('/auth');
+    } catch (error: any) {
+      console.error('Account Deletion Error:', error);
+      alert(error.message);
     }
   };
 
@@ -218,6 +219,21 @@ function MainApp() {
       await updateProperty(currentProperty.id, {
         ta10Data: data
       });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
+    }
+  };
+
+  const handlePostSaleUpdate = async (data: any) => {
+    if (!currentProperty) return;
+    try {
+      const isComplete = data.licenceToAssignStatus === 'Executed' && 
+                        data.deedOfCovenantStatus === 'Executed';
+      
+      await updateProperty(currentProperty.id, {
+        postSaleTracking: data,
+        ['vaultProgress.postSale']: isComplete
+      } as any);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/properties/${currentProperty.id}`);
     }
@@ -370,57 +386,78 @@ function MainApp() {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    if (!window.confirm('Are you sure you want to close your account and delete all data? This action is permanent and cannot be undone.')) {
-      return;
-    }
+  const handlePayment = async (priceId: string) => {
+    if (!currentProperty || !user) return;
 
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
-        deletedAt: new Date().toISOString()
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          priceId: priceId
+        }),
       });
 
-      // Sign out
-      await auth.signOut();
-      window.location.reload();
-    } catch (error) {
-      console.error('Error deleting account:', error);
-      alert('Failed to delete account. Please contact support.');
-    }
-  };
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create checkout session');
+      }
 
-  const handlePayment = async () => {
-    if (!currentProperty) return;
-
-    try {
-      // Mock payment: direct Firestore update to bypass Stripe in preview
-      await updateProperty(currentProperty.id, {
-        paymentStatus: 'paid',
-        hasPaid: true
-      });
-      
-      // Success routing: automatically navigate to Step 1
-      setActiveSection('team');
-    } catch (error) {
-      // Error handling: log for security rule rejections
-      console.error('Mock Payment Error:', error);
+      const session = await response.json();
+      if (session.url) {
+        window.location.href = session.url;
+      } else {
+        throw new Error('Failed to retrieve checkout URL');
+      }
+    } catch (error: any) {
+      console.error('Payment Error:', error);
+      alert(`Payment Error: ${error.message}`);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col pt-16">
-      <div className="flex flex-1">
+    <div className="flex-1 bg-slate-50 flex flex-col overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden">
         <Sidebar 
           activeSection={activeSection} 
-          onSectionChange={setActiveSection} 
+          onSectionChange={(id) => {
+            setActiveSection(id);
+            setIsSidebarOpen(false);
+          }} 
           profile={currentProperty as any} 
-          onBackToProperties={() => setCurrentPropertyId(null)}
+          onBackToProperties={() => {
+            setCurrentPropertyId(null);
+            setActiveSection('dashboard');
+            setIsSidebarOpen(false);
+          }}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
         />
         
-        <main className="flex-1 ml-64 p-12 max-w-6xl mx-auto">
-          <AnimatePresence mode="wait">
-            {effectiveSection === 'dashboard' && (
+        <main id="main-scroll-container" className={cn(
+          "flex-1 md:ml-64 h-full overflow-y-auto w-full max-w-full [webkit-overflow-scrolling:touch] hide-scrollbar",
+          isSidebarOpen && "overflow-hidden"
+        )}>
+          <div className="p-4 sm:p-8 md:p-12">
+            <AnimatePresence mode="wait">
+            {activeSection === 'dashboard' && !currentProperty && (
+              <motion.div
+                key="properties-list"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                <PropertiesList onPropertySelected={(id) => {
+                  setCurrentPropertyId(id);
+                  setActiveSection('team');
+                }} />
+              </motion.div>
+            )}
+
+            {activeSection === 'dashboard' && currentProperty && (
             <motion.div
               key="dashboard"
               initial={{ opacity: 0, x: 20 }}
@@ -428,40 +465,42 @@ function MainApp() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-10"
             >
-              <header className="flex justify-between items-end border-b border-slate-200 pb-8">
+              <header className="flex flex-col md:flex-row md:justify-between md:items-end border-b border-slate-200 pb-8 gap-6">
                 <div>
-                  <div className="flex items-center gap-4 text-gold font-bold text-xs uppercase tracking-widest mb-2">
-                    <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-3 text-gold font-bold text-[10px] uppercase tracking-widest mb-4">
+                    <div className="flex items-center gap-1 bg-gold/5 px-2 py-1 rounded">
                       <MapPin size={14} />
                       {currentProperty.address}
                     </div>
                     {currentProperty.uprn && (
-                      <div className="flex items-center gap-1 border-l border-slate-200 pl-4">
-                        <Hash size={14} />
+                      <div className="flex items-center gap-1 border-l border-slate-200 pl-3 break-all">
+                        <Hash size={14} className="flex-shrink-0" />
                         UPRN: {currentProperty.uprn}
                       </div>
                     )}
                     {currentProperty.epc_rating && (
-                      <div className="flex items-center gap-1 border-l border-slate-200 pl-4">
-                        <Zap size={14} />
+                      <div className="flex items-center gap-1 border-l border-slate-200 pl-3">
+                        <Zap size={14} className="flex-shrink-0" />
                         EPC: {currentProperty.epc_rating}
                       </div>
                     )}
                   </div>
-                  <h2 className="text-4xl font-serif font-bold text-navy mb-2">Property Vault</h2>
-                  <p className="text-slate-500 max-w-lg">
+                  <h2 className="text-3xl md:text-4xl font-serif font-bold text-navy mb-2 leading-tight">Property Vault</h2>
+                  <p className="text-slate-500 max-w-lg text-sm md:text-base leading-relaxed">
                     Welcome back, <span className="font-bold text-navy">{profile.displayName || profile.email}</span>. 
                     Organising your sale for <span className="text-navy font-semibold">{currentProperty.address}</span>.
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-navy uppercase tracking-widest mb-1">Status</p>
-                  <p className={cn(
-                    "text-lg font-medium",
-                    progress === 100 ? "text-green-600" : "text-amber-600"
-                  )}>
-                    {progress === 100 ? "Fully Compliant" : "Action Required"}
-                  </p>
+                <div className="md:text-right flex md:flex-col items-center md:items-end justify-between bg-slate-50 md:bg-transparent p-4 md:p-0 rounded-2xl">
+                  <div>
+                    <p className="text-[10px] font-bold text-navy uppercase tracking-widest mb-1">Status</p>
+                    <p className={cn(
+                      "text-sm md:text-lg font-medium",
+                      progress === 100 ? "text-green-600" : (currentProperty.paymentStatus === 'paid' ? "text-navy" : "text-amber-600")
+                    )}>
+                      {progress === 100 ? "Fully Compliant" : (currentProperty.paymentStatus === 'paid' ? "Ready" : "Action Required")}
+                    </p>
+                  </div>
                 </div>
               </header>
 
@@ -493,28 +532,39 @@ function MainApp() {
                     <CreditCard size={120} />
                   </div>
                   <div>
-                    <h3 className="text-xl font-serif font-semibold mb-2">Verification Fee</h3>
+                    <h3 className="text-xl font-serif font-semibold mb-2">
+                      {currentProperty.paymentStatus === 'paid' ? "Vault Access" : "Verification Fee"}
+                    </h3>
                     <p className="text-slate-300 text-sm mb-6">
                       One-time fee for legal document verification and vault hosting for this property.
                     </p>
-                    <p className="text-3xl font-bold mb-8">£{totalPrice.toFixed(2)}</p>
+                    {currentProperty.paymentStatus !== 'paid' && (
+                      <p className="text-3xl font-bold mb-8">£{totalPrice.toFixed(2)}</p>
+                    )}
                   </div>
-                  <button
-                    onClick={handlePayment}
-                    disabled={currentProperty.paymentStatus === 'paid'}
-                    className={cn(
-                      "w-full py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2",
-                      currentProperty.paymentStatus === 'paid' 
-                        ? "bg-green-500/20 text-green-400 cursor-default" 
-                        : "bg-white text-navy hover:bg-slate-100 active:scale-95"
+                  <div className="space-y-4">
+                    <button
+                      onClick={() => setActiveSection('payment')}
+                      disabled={currentProperty.paymentStatus === 'paid'}
+                      className={cn(
+                        "w-full py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2",
+                        currentProperty.paymentStatus === 'paid' 
+                          ? "bg-green-500 text-white cursor-default shadow-lg shadow-green-500/20" 
+                          : "bg-white text-navy hover:bg-slate-100 active:scale-95"
+                      )}
+                    >
+                      {currentProperty.paymentStatus === 'paid' ? (
+                        <><CheckCircle2 size={20} /> Paid & Verified</>
+                      ) : (
+                        <><CreditCard size={20} /> Pay with Stripe</>
+                      )}
+                    </button>
+                    {currentProperty.paymentStatus === 'paid' && (
+                      <p className="text-[10px] text-slate-400 text-center uppercase tracking-wider font-semibold">
+                        One-time fee settled. No further charges apply to this property.
+                      </p>
                     )}
-                  >
-                    {currentProperty.paymentStatus === 'paid' ? (
-                      <><CheckCircle2 size={20} /> Paid & Verified</>
-                    ) : (
-                      <><CreditCard size={20} /> Pay with Stripe</>
-                    )}
-                  </button>
+                  </div>
                 </div>
               </section>
 
@@ -523,9 +573,10 @@ function MainApp() {
                   <h3 className="text-2xl font-serif font-semibold text-navy">5-Step Pathway Overview</h3>
                   <button 
                     onClick={() => setActiveSection('team')}
-                    className="text-navy font-semibold flex items-center gap-2 hover:underline"
+                    className="text-navy font-semibold flex items-center gap-2 hover:underline group"
                   >
-                    Start Prepping <ArrowRight size={18} />
+                    {completedCount > 0 ? "Continue Prepping" : "Start Prepping"} 
+                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                   </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -544,10 +595,16 @@ function MainApp() {
                         {section.id === 'money' && <BadgePoundSterling size={24} />}
                         {section.id === 'safety' && <ShieldAlert size={24} />}
                         {section.id === 'handoff' && <Send size={24} />}
+                        {section.id === 'postSale' && <Signature size={24} />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-semibold text-navy truncate">{section.title}</h4>
-                        <p className="text-xs text-slate-500 truncate">{section.status}</p>
+                        <p className={cn(
+                          "text-xs font-medium uppercase tracking-wider",
+                          section.status === 'completed' ? "text-green-600" : (currentProperty.paymentStatus === 'paid' ? "text-gold" : "text-slate-400")
+                        )}>
+                          {section.status === 'completed' ? "Completed" : (currentProperty.paymentStatus === 'paid' ? "Action Required" : "Locked")}
+                        </p>
                       </div>
                       {section.status === 'completed' && <CheckCircle2 size={20} className="text-green-500" />}
                     </button>
@@ -602,13 +659,14 @@ function MainApp() {
                 onTA6Update={handleTA6Update}
                 onTA7Update={handleTA7Update}
                 onTA10Update={handleTA10Update}
+                onPostSaleUpdate={handlePostSaleUpdate}
               />
             </motion.div>
           )}
 
-          {effectiveSection === 'handoff' && (
+          {['handoff', 'postSale'].includes(effectiveSection) && (
             <motion.div
-              key="handoff"
+              key={effectiveSection}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -632,23 +690,44 @@ function MainApp() {
                     </div>
                   )}
                 </div>
+                <h2 className="text-4xl font-serif font-bold text-navy mb-2">
+                  {INITIAL_SECTIONS.find(s => s.id === effectiveSection)?.title}
+                </h2>
+                <p className="text-slate-500">
+                  {INITIAL_SECTIONS.find(s => s.id === effectiveSection)?.description}
+                </p>
               </header>
-              <SolicitorHandoff 
-                profile={currentProperty as any} 
-                sellerName={profile?.displayName}
-                onSend={handleSolicitorHandoff} 
-              />
+              {effectiveSection === 'handoff' ? (
+                <SolicitorHandoff 
+                  profile={currentProperty as any} 
+                  sellerName={profile?.displayName}
+                  onSend={handleSolicitorHandoff} 
+                />
+              ) : (
+                <StepContent 
+                  id={effectiveSection as VaultSectionId}
+                  profile={currentProperty as any}
+                  onUpload={handleUpload}
+                  onDeleteFile={handleDeleteFile}
+                  onTeamUpdate={handleTeamUpdate}
+                  onFinancialUpdate={handleFinancialUpdate}
+                  onTA6Update={handleTA6Update}
+                  onTA7Update={handleTA7Update}
+                  onTA10Update={handleTA10Update}
+                  onPostSaleUpdate={handlePostSaleUpdate}
+                />
+              )}
             </motion.div>
           )}
 
           {effectiveSection === 'payment' && (
             <PaymentGate 
               property={currentProperty}
+              userId={user?.uid || ''}
               paidPropertiesCount={paidPropertiesCount}
-              onProceed={handlePayment}
             />
           )}
-          {effectiveSection === 'settings' && (
+          {activeSection === 'settings' && (
             <motion.div
               key="settings"
               initial={{ opacity: 0, x: 20 }}
@@ -664,30 +743,45 @@ function MainApp() {
               <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-8">
                 <div className="space-y-4">
                   <h3 className="text-xl font-serif font-bold text-navy">Danger Zone</h3>
-                  <p className="text-sm text-slate-500">
-                    Once you delete your account, there is no going back. Please be certain.
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    Deleting your account will permanently remove all your properties, documents, and personal data from our servers. This action is irreversible.
                   </p>
                 </div>
 
-                <button
-                  onClick={handleDeleteAccount}
-                  className="px-6 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl font-bold hover:bg-red-600 hover:text-white transition-all"
-                >
-                  Close Account & Delete Data
-                </button>
+                <div className="pt-4">
+                  <button
+                    onClick={() => setIsDeletingAccount(true)}
+                    className="px-8 py-4 bg-red-50 text-red-600 border border-red-200 rounded-2xl font-bold hover:bg-red-600 hover:text-white transition-all shadow-sm hover:shadow-lg active:scale-95"
+                  >
+                    Delete My Account & Purge All Data
+                  </button>
+                </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+
+        <footer className="p-6 border-t border-slate-200 text-center bg-white mt-12">
+          <p className="text-xs text-slate-400 max-w-2xl mx-auto">
+            Prepped Seller is a document collation tool. We do not provide legal advice. 
+            AML/KYC verification remains the responsibility of your appointed solicitor.
+          </p>
+        </footer>
+      </div>
+    </main>
+
     </div>
 
-    <footer className="ml-64 p-6 border-t border-slate-200 text-center bg-white">
-      <p className="text-xs text-slate-400 max-w-2xl mx-auto">
-        Prepped Seller is a document collation tool. We do not provide legal advice. 
-        AML/KYC verification remains the responsibility of your appointed solicitor.
-      </p>
-    </footer>
+    <DeleteConfirmationModal
+      isOpen={isDeletingAccount}
+      onClose={() => setIsDeletingAccount(false)}
+      onConfirm={handleDeleteAccount}
+      title="Delete Account Permanently?"
+      description="This will purge all your properties, files, and account data. There is no way to recover your information once deleted."
+      confirmText="Confirm Permanent Deletion"
+      requireDoubleConfirm={true}
+      doubleConfirmPhrase="DELETE ACCOUNT"
+    />
   </div>
 );
 }
@@ -705,15 +799,17 @@ export default function App() {
 }
 
 function AppContent() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
   const shareId = new URLSearchParams(location.search).get('shareId');
 
   return (
     <>
-      {!shareId && <Navbar />}
+      {!shareId && <Navbar onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />}
       <Routes>
+        <Route path="/payment-success" element={<PaymentSuccess />} />
         <Route path="/glossary" element={<Glossary />} />
-        <Route path="*" element={<MainApp />} />
+        <Route path="*" element={<MainApp isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />} />
       </Routes>
     </>
   );

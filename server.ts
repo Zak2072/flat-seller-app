@@ -2,11 +2,37 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import Stripe from "stripe";
+import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
+// Initialize Firebase Admin
+import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
+import fs from "fs";
+
+if (!admin.apps.length) {
+  // Use ambient credentials
+  console.log(`[Admin] Initializing with default app settings...`);
+  admin.initializeApp();
+}
+
+const FIRESTORE_DATABASE_ID = firebaseConfig.firestoreDatabaseId;
+console.log(`[Admin] Configured Firestore Database ID: ${FIRESTORE_DATABASE_ID || '(default)'}`);
+
+let stripeClient: Stripe | null = null;
+
+function getStripe(): Stripe {
+  if (!stripeClient) {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+      throw new Error("STRIPE_SECRET_KEY is not configured in environment variables");
+    }
+    stripeClient = new Stripe(key);
+  }
+  return stripeClient;
+}
 
 async function startServer() {
   const app = express();
@@ -17,35 +43,87 @@ async function startServer() {
   // API Route for Stripe Checkout Session
   app.post("/api/create-checkout-session", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, priceId, propertyId } = req.body;
+      const stripe = getStripe();
       
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items: [
           {
-            price_data: {
-              currency: "gbp",
-              product_data: {
-                name: "Prepped Seller - Material Information Verification",
-                description: "One-time fee for legal document verification and vault hosting.",
-              },
-              unit_amount: 6000, // £60.00 (£50 + VAT)
-            },
+            price: priceId,
             quantity: 1,
           },
         ],
         mode: "payment",
-        success_url: `${req.headers.origin}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${req.headers.origin}?payment=cancel`,
+        success_url: `${req.headers.origin}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${req.headers.origin}/?payment=cancel`,
         metadata: {
           userId,
+          propertyId,
         },
+        automatic_tax: { enabled: true },
+        billing_address_collection: 'required',
+        tax_id_collection: { enabled: true },
       });
 
-      res.json({ id: session.id });
+      res.json({ url: session.url });
     } catch (error: any) {
       console.error("Stripe Session Error:", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Verify Payment and Update Database
+  app.get("/api/verify-payment", async (req, res) => {
+    try {
+      const { session_id } = req.query;
+      console.log(`[Verify] Starting verification for session: ${session_id}`);
+      
+      if (!session_id) {
+        console.error("[Verify] Missing session_id");
+        return res.status(400).json({ error: "Missing session_id" });
+      }
+
+      const stripe = getStripe();
+      const session = await stripe.checkout.sessions.retrieve(session_id as string);
+      
+      // LOG THE FULL SESSION FOR AUDIT
+      console.log("[Verify] Full Session Metadata:", JSON.stringify(session.metadata, null, 2));
+      console.log(`[Verify] Payment Status: ${session.payment_status}`);
+
+      if (session.payment_status === 'paid') {
+        const userId = session.metadata?.userId;
+        const propertyId = session.metadata?.propertyId;
+
+        console.log(`[Verify] Payment confirmed for userId: ${userId}, propertyId: ${propertyId}`);
+
+        if (userId && propertyId) {
+          return res.json({ 
+            success: true, 
+            message: "Payment verified by Stripe", 
+            metadata: session.metadata 
+          });
+        } else {
+          console.error("[Verify] Missing userId or propertyId in Stripe session metadata");
+          return res.json({ 
+            success: false, 
+            message: "Critical Error: userId or propertyId missing from Stripe metadata.",
+            metadata: session.metadata 
+          });
+        }
+      }
+
+      console.warn(`[Verify] Session not paid. Current status: ${session.payment_status}`);
+      res.json({ success: false, message: `Stripe reports payment status as: ${session.payment_status}` });
+    } catch (error: any) {
+      console.error("[Verify] Critical Verification Error:", error);
+      // Return 200 with error details to allow the frontend to display the exact cause
+      res.json({ 
+        success: false, 
+        error: error.message, 
+        stack: error.stack,
+        message: `System Error: ${error.message}. Please check server logs for details.`
+      });
     }
   });
 

@@ -56,7 +56,7 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, sel
   // Status calculation logic
   const getStakeholdersStatus = () => {
     const info = profile.teamInfo;
-    const required = [info?.groundLeaseHolder, info?.managementCompany, info?.managingAgent];
+    const required = [info?.freeholderName, info?.freeholderAgent, info?.managementCompany, info?.managingAgent];
     const present = required.filter(Boolean).length;
     if (present === required.length) return 'green';
     if (present > 0) return 'amber';
@@ -89,7 +89,8 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, sel
 
   const getMissingStakeholders = () => {
     const missing = [];
-    if (!profile.teamInfo?.groundLeaseHolder) missing.push('Ground Lease Holder Details');
+    if (!profile.teamInfo?.freeholderName) missing.push('Freeholder Details');
+    if (!profile.teamInfo?.freeholderAgent) missing.push('Freeholder Agent Details');
     if (!profile.teamInfo?.managementCompany) missing.push('Management Company Details');
     if (!profile.teamInfo?.managingAgent) missing.push('Managing Agent Details');
     return missing;
@@ -180,7 +181,20 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, sel
         ta6Data: profile.ta6Data || null,
         ta10Data: profile.ta10Data || null,
         lpe1Data: profile.lpe1Data || null,
-        sharedAt: new Date().toISOString()
+        sharedAt: new Date().toISOString(),
+        bsa_compliance: {
+          freeholder_name: profile.teamInfo?.freeholderName || null,
+          freeholder_agent: profile.teamInfo?.freeholderAgent || null,
+          landlord_certificate_status: profile.landlordCertificateUrl ? 'Provided' : 'Missing',
+          bsa_deed_status: profile.bsaCertificateUrl ? 'Provided' : 'Missing',
+          landlordCertificateUrl: profile.landlordCertificateUrl || null,
+          bsaCertificateUrl: profile.bsaCertificateUrl || null
+        },
+        financial_evidence: {
+          mortgage_lender: profile.teamInfo?.mortgageLender || 'Not Provided',
+          mortgage_account_number: profile.teamInfo?.mortgageAccountNumber || 'Not Provided',
+          status: (profile.teamInfo?.mortgageLender && profile.teamInfo?.mortgageAccountNumber) ? 'Verified' : 'Not Provided'
+        }
       },
       evidence: profile.vaultFiles || {},
       solicitorDetails: {
@@ -202,6 +216,30 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, sel
       // Create evidence_documents folder
       const folder = zip.folder('evidence_documents');
 
+      // Create BSA folder if files exist
+      const bsaFolder = (profile.landlordCertificateUrl || profile.bsaCertificateUrl) 
+        ? zip.folder('BSA_Compliance') 
+        : null;
+
+      // Handle BSA Certificates
+      const bsaPromises = [];
+      if (profile.landlordCertificateUrl) {
+        bsaPromises.push((async () => {
+          try {
+            const res = await fetch(profile.landlordCertificateUrl!);
+            if (res.ok) bsaFolder?.file('landlord_certificate.pdf', await res.blob());
+          } catch (e) { console.warn('BSA Landlord fetch failed', e); }
+        })());
+      }
+      if (profile.bsaCertificateUrl) {
+        bsaPromises.push((async () => {
+          try {
+            const res = await fetch(profile.bsaCertificateUrl!);
+            if (res.ok) bsaFolder?.file('leaseholder_deed.pdf', await res.blob());
+          } catch (e) { console.warn('BSA Deed fetch failed', e); }
+        })());
+      }
+
       // Fetch all evidence files and bundle them
       const evidence = profile.vaultFiles || {};
       const filePromises = Object.entries(evidence).map(async ([key, data]: [string, any]) => {
@@ -218,7 +256,7 @@ export const SolicitorHandoff: React.FC<SolicitorHandoffProps> = ({ profile, sel
         }
       });
 
-      await Promise.all(filePromises);
+      await Promise.all([...bsaPromises, ...filePromises]);
 
       // Generate the ZIP blob
       const zipContent = await zip.generateAsync({ type: 'blob' });

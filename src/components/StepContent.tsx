@@ -17,11 +17,17 @@ import {
   Trash2,
   Plus,
   Upload,
-  ChevronDown
+  ChevronDown,
+  Building2,
+  Key,
+  Signature,
+  FileSearch,
+  Timer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { storage, auth } from '../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { storage, auth, db } from '../firebase';
 import { cn } from '../lib/utils';
 import type { PropertyProfile, VaultSectionId } from '../types';
 
@@ -35,6 +41,7 @@ interface StepContentProps {
   onTA6Update: (data: any) => Promise<void>;
   onTA7Update: (data: any) => Promise<void>;
   onTA10Update: (data: any) => Promise<void>;
+  onPostSaleUpdate: (data: any) => Promise<void>;
 }
 
 interface TA10ItemRowProps {
@@ -100,15 +107,25 @@ const TA10ItemRow: React.FC<TA10ItemRowProps> = ({ name, data, onChange }) => {
   );
 };
 
-export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload, onDeleteFile, onTeamUpdate, onFinancialUpdate, onTA6Update, onTA7Update, onTA10Update }) => {
-  const [teamData, setTeamData] = useState(profile.teamInfo || {
-    groundLeaseHolder: '',
-    managementCompany: '',
-    managingAgent: ''
+export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload, onDeleteFile, onTeamUpdate, onFinancialUpdate, onTA6Update, onTA7Update, onTA10Update, onPostSaleUpdate }) => {
+  const [teamData, setTeamData] = useState({
+    freeholderName: profile.teamInfo?.freeholderName || (profile.teamInfo as any)?.owningCompany || '',
+    freeholderAgent: profile.teamInfo?.freeholderAgent || (profile.teamInfo as any)?.groundLeaseHolder || '',
+    managementCompany: profile.teamInfo?.managementCompany || '',
+    managingAgent: profile.teamInfo?.managingAgent || '',
+    mortgageLender: profile.teamInfo?.mortgageLender || '',
+    mortgageAccountNumber: profile.teamInfo?.mortgageAccountNumber || ''
   });
+  const [sameAsFreeholderAgent, setSameAsFreeholderAgent] = useState(false);
   const [financialData, setFinancialData] = useState(profile.financialInfo || {
     reserveFundAmount: ''
   });
+  const [postSaleData, setPostSaleData] = useState(profile.postSaleTracking || {
+    licenceToAssignStatus: 'Not Started',
+    deedOfCovenantStatus: 'Not Started'
+  });
+  const [updatingPostSale, setUpdatingPostSale] = useState(false);
+  const [postSaleSaveSuccess, setPostSaleSaveSuccess] = useState(false);
   const [ta6Data, setTa6Data] = useState<any>(profile.ta6Data || {
     boundaries: '',
     disputes: { hasDisputes: false, details: '' },
@@ -225,6 +242,16 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
   const [ta10SaveSuccess, setTa10SaveSuccess] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const [activeFormSection, setActiveFormSection] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (sameAsFreeholderAgent) {
+      setTeamData(prev => ({
+        ...prev,
+        managementCompany: prev.freeholderAgent,
+        managingAgent: prev.freeholderAgent
+      }));
+    }
+  }, [sameAsFreeholderAgent, teamData.freeholderAgent]);
 
   React.useEffect(() => {
     if (profile.ta6Data) {
@@ -390,6 +417,20 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
       console.error("Failed to save TA10 progress:", error);
     } finally {
       setUpdatingTA10(false);
+    }
+  };
+
+  const handlePostSaleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUpdatingPostSale(true);
+    try {
+      await onPostSaleUpdate(postSaleData);
+      setPostSaleSaveSuccess(true);
+      setTimeout(() => setPostSaleSaveSuccess(false), 3000);
+    } catch (error) {
+      console.error("Failed to save Post-Sale tracking progress:", error);
+    } finally {
+      setUpdatingPostSale(false);
     }
   };
 
@@ -601,6 +642,87 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
     }
   };
 
+  const handleBSAUpload = async (field: 'landlordCertificateUrl' | 'bsaCertificateUrl', files: FileList) => {
+    if (!auth.currentUser || !profile.id) return;
+    const file = files[0];
+    if (!file) return;
+
+    setUploadingSlots(prev => ({ ...prev, [field]: true }));
+    try {
+      const storageRef = ref(storage, `users/${auth.currentUser.uid}/properties/${profile.id}/forms/${file.name}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      const propertyRef = doc(db, 'users', auth.currentUser.uid, 'properties', profile.id);
+      await updateDoc(propertyRef, {
+        [field]: downloadURL
+      });
+    } catch (error) {
+      console.error("BSA upload failed:", error);
+    } finally {
+      setUploadingSlots(prev => ({ ...prev, [field]: false }));
+    }
+  };
+
+  const renderBSAUploadSlot = (field: 'landlordCertificateUrl' | 'bsaCertificateUrl', label: string, description: string) => {
+    const url = profile[field];
+    const isUploading = uploadingSlots[field];
+
+    return (
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 relative">
+        <div className="flex justify-between items-start">
+          <div className="flex-1">
+            <h4 className="font-bold text-navy">{label}</h4>
+            <p className="text-xs text-slate-500">{description}</p>
+          </div>
+          {url && <CheckCircle2 size={20} className="text-green-500 shrink-0" />}
+        </div>
+
+        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+          <span className={cn(
+            "text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider",
+            url ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+          )}>
+            {url ? 'Uploaded' : 'Missing'}
+          </span>
+          {url && (
+            <a 
+              href={url} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-navy hover:text-gold transition-colors text-[10px] font-bold flex items-center gap-1"
+            >
+              View File <ExternalLink size={10} />
+            </a>
+          )}
+        </div>
+
+        <label className={cn(
+          "flex items-center justify-center w-full cursor-pointer transition-all group py-4 border-2 border-dashed border-slate-200 rounded-xl hover:bg-slate-50 hover:border-navy",
+          isUploading && "opacity-50 cursor-not-allowed"
+        )}>
+          <div className="flex items-center gap-2">
+            {isUploading ? (
+              <Loader2 className="animate-spin text-navy" size={16} />
+            ) : (
+              <Upload size={16} className="text-slate-400 group-hover:text-navy" />
+            )}
+            <span className="text-xs text-slate-500 font-medium group-hover:text-navy">
+              {isUploading ? 'Uploading...' : (url ? 'Replace File' : 'Select File')}
+            </span>
+          </div>
+          <input 
+            type="file" 
+            className="hidden" 
+            disabled={isUploading}
+            accept=".pdf"
+            onChange={(e) => e.target.files && handleBSAUpload(field, e.target.files)}
+          />
+        </label>
+      </div>
+    );
+  };
+
   const renderMiniUploadSlot = (slotId: string, label: string, item: string) => {
     const warrantyKey = item.toLowerCase().replace(/\s+/g, '_');
     const evidenceUrl = slotId.startsWith('ta7_') ? ta7Data.evidence?.[warrantyKey] : ta6Data.evidence?.[warrantyKey];
@@ -681,150 +803,268 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
     case 'team':
       return (
         <div className="max-w-2xl space-y-8">
-          <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-8">
             <div className="flex items-center gap-4 mb-2">
               <div className="w-12 h-12 bg-navy/5 text-navy rounded-2xl flex items-center justify-center">
                 <Users size={24} />
               </div>
               <div>
                 <h3 className="text-2xl font-serif font-bold text-navy">Stakeholders</h3>
-                <p className="text-slate-500 text-sm">Ground Lease Holder, Management Company and Managing Agent details.</p>
+                <p className="text-slate-500 text-sm">Identifying the key authorities responsible for your building.</p>
               </div>
             </div>
             
-            <form onSubmit={handleTeamSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 ml-1">
-                  <label className="text-xs font-bold text-navy uppercase tracking-wider">Ground Lease Holder</label>
-                  <div className="relative">
-                    <button 
-                      type="button"
-                      onClick={() => setActiveTooltip(activeTooltip === 'groundLeaseHolder' ? null : 'groundLeaseHolder')}
-                      className="text-gold hover:text-navy transition-colors"
-                    >
-                      <HelpCircle size={14} />
-                    </button>
-                    <AnimatePresence>
-                      {activeTooltip === 'groundLeaseHolder' && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 5 }}
-                          className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+            <form onSubmit={handleTeamSubmit} className="space-y-10">
+              {/* Section 1: Ground Lease */}
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
+                  <Building2 size={18} className="text-gold" />
+                  <h4 className="font-bold text-navy uppercase tracking-wider text-sm">Ground Lease</h4>
+                </div>
+                
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Freeholder (Owning Company)</label>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'freeholderName' ? null : 'freeholderName')}
+                          className="text-gold hover:text-navy transition-colors"
                         >
-                          <p className="leading-relaxed mb-2">The person or company that owns the land. They are usually paid ground rent.</p>
-                          <Link 
-                            to="/glossary#ground-lease-holder" 
-                            className="text-gold hover:underline font-bold flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Learn more... <ExternalLink size={10} />
-                          </Link>
-                          <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'freeholderName' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">The ultimate legal owner of the building, e.g., Adriatic Land 11 Ltd.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.freeholderName}
+                      onChange={(e) => setTeamData({...teamData, freeholderName: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
+                      placeholder="e.g. Adriatic Land 11 Ltd"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Freeholder Agent</label>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'freeholderAgent' ? null : 'freeholderAgent')}
+                          className="text-gold hover:text-navy transition-colors"
+                        >
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'freeholderAgent' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">The company that collects your ground rent and issues certificates, e.g., HomeGround.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.freeholderAgent}
+                      onChange={(e) => setTeamData({...teamData, freeholderAgent: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
+                      placeholder="e.g. HomeGround"
+                      required
+                    />
                   </div>
                 </div>
-                <input 
-                  type="text"
-                  value={teamData.groundLeaseHolder}
-                  onChange={(e) => setTeamData({...teamData, groundLeaseHolder: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
-                  placeholder="e.g. Freehold Properties Ltd"
-                  required
-                />
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 ml-1">
-                  <label className="text-xs font-bold text-navy uppercase tracking-wider">Management Company</label>
-                  <div className="relative">
-                    <button 
-                      type="button"
-                      onClick={() => setActiveTooltip(activeTooltip === 'managementCompany' ? null : 'managementCompany')}
-                      className="text-gold hover:text-navy transition-colors"
-                    >
-                      <HelpCircle size={14} />
-                    </button>
-                    <AnimatePresence>
-                      {activeTooltip === 'managementCompany' && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 5 }}
-                          className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
-                        >
-                          <p className="leading-relaxed mb-2">The company responsible for the block's upkeep. Often made up of the residents.</p>
-                          <Link 
-                            to="/glossary#management-company" 
-                            className="text-gold hover:underline font-bold flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Learn more... <ExternalLink size={10} />
-                          </Link>
-                          <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
+
+              {/* Checkbox for sync */}
+              <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 cursor-pointer hover:bg-slate-100 transition-all group">
+                <div className={cn(
+                  "w-5 h-5 rounded border flex items-center justify-center transition-all",
+                  sameAsFreeholderAgent ? "bg-navy border-navy" : "border-slate-300 bg-white group-hover:border-navy"
+                )}>
+                  {sameAsFreeholderAgent && <CheckCircle2 size={14} className="text-white" />}
                 </div>
                 <input 
-                  type="text"
-                  value={teamData.managementCompany}
-                  onChange={(e) => setTeamData({...teamData, managementCompany: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
-                  placeholder="e.g. Jenner Walk Management"
-                  required
+                  type="checkbox"
+                  className="hidden"
+                  checked={sameAsFreeholderAgent}
+                  onChange={(e) => setSameAsFreeholderAgent(e.target.checked)}
                 />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 ml-1">
-                  <label className="text-xs font-bold text-navy uppercase tracking-wider">Managing Agent</label>
-                  <div className="relative">
-                    <button 
-                      type="button"
-                      onClick={() => setActiveTooltip(activeTooltip === 'managingAgent' ? null : 'managingAgent')}
-                      className="text-gold hover:text-navy transition-colors"
-                    >
-                      <HelpCircle size={14} />
-                    </button>
-                    <AnimatePresence>
-                      {activeTooltip === 'managingAgent' && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 5 }}
-                          className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                <span className="text-xs font-bold text-navy">The Freeholder’s Agent also manages the building</span>
+              </label>
+
+              {/* Section 2: Your Building */}
+              <div className={cn(
+                "space-y-6 p-6 rounded-2xl border transition-all",
+                sameAsFreeholderAgent ? "bg-slate-50/50 border-slate-100 opacity-80" : "bg-white border-slate-200 shadow-sm"
+              )}>
+                <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
+                  <Key size={18} className="text-gold" />
+                  <h4 className="font-bold text-navy uppercase tracking-wider text-sm">Your Building</h4>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Management Company (RMC)</label>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'managementCompany' ? null : 'managementCompany')}
+                          className="text-gold hover:text-navy transition-colors"
                         >
-                          <p className="leading-relaxed mb-2">The firm hired to handle the day-to-day running of the building and collect service charges.</p>
-                          <Link 
-                            to="/glossary#managing-agent" 
-                            className="text-gold hover:underline font-bold flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Learn more... <ExternalLink size={10} />
-                          </Link>
-                          <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'managementCompany' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">The residents' company or entity responsible for the building management as per your lease.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.managementCompany}
+                      onChange={(e) => setTeamData({...teamData, managementCompany: e.target.value})}
+                      disabled={sameAsFreeholderAgent}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all disabled:bg-slate-100 disabled:text-slate-500"
+                      placeholder="e.g. Jenner Walk Management"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Managing Agent</label>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'managingAgent' ? null : 'managingAgent')}
+                          className="text-gold hover:text-navy transition-colors"
+                        >
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'managingAgent' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">The firm that handles repairs and service charges, e.g., Fraser Allen Estate Management.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.managingAgent}
+                      onChange={(e) => setTeamData({...teamData, managingAgent: e.target.value})}
+                      disabled={sameAsFreeholderAgent}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all disabled:bg-slate-100 disabled:text-slate-500"
+                      placeholder="e.g. Fraser Allen Estate Management"
+                      required
+                    />
                   </div>
                 </div>
-                <input 
-                  type="text"
-                  value={teamData.managingAgent}
-                  onChange={(e) => setTeamData({...teamData, managingAgent: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
-                  placeholder="e.g. City Block Management"
-                  required
-                />
               </div>
+
+              {/* Section 3: Financial Stakeholders */}
+              <div className="space-y-6 p-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center gap-3 pb-2 border-b border-slate-100">
+                  <BadgePoundSterling size={18} className="text-gold" />
+                  <h4 className="font-bold text-navy uppercase tracking-wider text-sm">Financial Stakeholders</h4>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Mortgage Lender</label>
+                      <div className="relative">
+                        <button 
+                          type="button"
+                          onClick={() => setActiveTooltip(activeTooltip === 'mortgageLender' ? null : 'mortgageLender')}
+                          className="text-gold hover:text-navy transition-colors"
+                        >
+                          <HelpCircle size={14} />
+                        </button>
+                        <AnimatePresence>
+                          {activeTooltip === 'mortgageLender' && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute z-50 left-0 top-6 w-64 bg-navy text-white p-4 rounded-xl text-xs shadow-2xl border border-gold/20"
+                            >
+                              <p className="leading-relaxed">This allows your solicitor to request a redemption statement immediately, preventing completion delays.</p>
+                              <div className="absolute -top-1 left-2 w-2 h-2 bg-navy rotate-45 border-l border-t border-gold/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.mortgageLender}
+                      onChange={(e) => setTeamData({...teamData, mortgageLender: e.target.value})}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
+                      placeholder="e.g. Santander, Nationwide"
+                    />
+                  </div>
+
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center gap-2 ml-1">
+                      <label className="text-xs font-bold text-navy uppercase tracking-wider">Mortgage Account Number</label>
+                    </div>
+                    <input 
+                      type="text"
+                      value={teamData.mortgageAccountNumber}
+                      onChange={(e) => setTeamData({...teamData, mortgageAccountNumber: e.target.value.replace(/[^a-zA-Z0-9]/g, '')})}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all"
+                      placeholder="e.g. 123456789"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <button 
                 type="submit"
                 disabled={updatingTeam}
-                className="w-full py-4 bg-navy text-white rounded-xl font-bold hover:bg-navy-light transition-all flex items-center justify-center gap-2"
+                className="w-full py-4 bg-navy text-white rounded-xl font-bold hover:bg-navy-light transition-all flex items-center justify-center gap-2 shadow-lg shadow-navy/10"
               >
-                {updatingTeam ? <Loader2 className="animate-spin" size={20} /> : 'Save Details'}
+                {updatingTeam ? <Loader2 className="animate-spin" size={20} /> : 'Save Stakeholders'}
               </button>
             </form>
           </div>
@@ -833,7 +1073,7 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
               <div className="w-10 h-10 bg-green-500 text-white rounded-full flex items-center justify-center">
                 <CheckCircle2 size={20} />
               </div>
-              <p className="text-green-800 font-medium">Step 1 complete. You’ve identified the key players. Peace of mind achieved.</p>
+              <p className="text-green-800 font-medium">Step 1 complete. You’ve identified the key players. Nice work.</p>
             </div>
           )}
         </div>
@@ -2927,6 +3167,16 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
 
               {[
                 {
+                  id: 'bsa',
+                  title: 'BSA Compliance',
+                  description: 'Building Safety Act 2022 Documents',
+                  tooltip: 'Mandatory for buildings over 11 meters or 5 stories.',
+                  items: [
+                    'Landlord Certificate: (Pursuant to Building Safety Act 2022).',
+                    'Leaseholder Deed of Certificate (BSA Certificate): (The deed completed by the seller).'
+                  ]
+                },
+                {
                   id: 'ta7',
                   title: 'TA7: Leasehold Information',
                   description: 'Leasehold Information Form',
@@ -2979,31 +3229,44 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
                     <ArrowRight className={cn("text-navy transition-transform", activeFormSection === prep.id && "rotate-90")} size={18} />
                   </summary>
                   <div className="p-6 pt-2 space-y-6 border-t border-slate-200/50 mt-1">
-                    <div className="space-y-4">
-                      {prep.id === 'lpe1' ? (
-                        <p className="text-sm text-slate-600 leading-relaxed">
-                          The LPE1 form is completed by the Managing Agent usually for a fee. While you may be able to assist in gathering the information in advance the buyer's solicitor will require the Managing Agent to sign the form as factually accurate. You can view the full requirements on the{' '}
-                          <a 
-                            href="https://www.lawsociety.org.uk/topics/property/leasehold-forms" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-navy font-bold hover:text-gold transition-colors underline"
-                          >
-                            Law Society website
-                          </a>.
+                    {prep.id === 'bsa' ? (
+                      <div className="space-y-6">
+                        <p className="text-sm text-slate-600 leading-relaxed italic bg-amber-50 p-4 rounded-xl border border-amber-100/50">
+                          <ShieldAlert size={16} className="inline-block text-amber-600 mr-2 mb-1" />
+                          If your building is over 11 meters or 5 stories, these certificates are mandatory for your buyer's lender.
                         </p>
-                      ) : (
-                        <p className="text-sm text-slate-600 leading-relaxed">
-                          If you have already completed a {prep.id.toUpperCase()} form sent to you by your solicitor please upload it here. If not please complete each section of the {prep.id.toUpperCase()} form below.
-                        </p>
-                      )}
-                      {renderUploadSlot(
-                        prep.id, 
-                        prep.id === 'lpe1' ? 'Upload LPE1 Management Pack' : `Upload Finished ${prep.id.toUpperCase()}`, 
-                        prep.description,
-                        prep.tooltip
-                      )}
-                    </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {renderBSAUploadSlot('landlordCertificateUrl', 'Landlord Certificate', 'Pursuant to Building Safety Act 2022')}
+                          {renderBSAUploadSlot('bsaCertificateUrl', 'Leaseholder Deed of Certificate', 'The deed completed by the seller')}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {prep.id === 'lpe1' ? (
+                          <p className="text-sm text-slate-600 leading-relaxed">
+                            The LPE1 form is completed by the Managing Agent usually for a fee. While you may be able to assist in gathering the information in advance the buyer's solicitor will require the Managing Agent to sign the form as factually accurate. You can view the full requirements on the{' '}
+                            <a 
+                              href="https://www.lawsociety.org.uk/topics/property/leasehold-forms" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-navy font-bold hover:text-gold transition-colors underline"
+                            >
+                              Law Society website
+                            </a>.
+                          </p>
+                        ) : (
+                          <p className="text-sm text-slate-600 leading-relaxed">
+                            If you have already completed a {prep.id.toUpperCase()} form sent to you by your solicitor please upload it here. If not please complete each section of the {prep.id.toUpperCase()} form below.
+                          </p>
+                        )}
+                        {renderUploadSlot(
+                          prep.id, 
+                          prep.id === 'lpe1' ? 'Upload LPE1 Management Pack' : `Upload Finished ${prep.id.toUpperCase()}`, 
+                          prep.description,
+                          prep.tooltip
+                        )}
+                      </div>
+                    )}
 
                     {prep.id === 'ta7' && (
                       <form onSubmit={handleTA7Submit} className="space-y-4">
@@ -4249,6 +4512,142 @@ export const StepContent: React.FC<StepContentProps> = ({ id, profile, onUpload,
               <p className="text-green-800 font-medium">Step 4 complete. Safety first! Your pack is almost ready for the solicitor.</p>
             </div>
           )}
+        </div>
+      );
+
+    case 'postSale':
+      return (
+        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-8">
+            <div className="flex items-center gap-4 mb-2">
+              <div className="w-12 h-12 bg-navy/5 text-navy rounded-2xl flex items-center justify-center">
+                <Signature size={24} />
+              </div>
+              <div>
+                <h3 className="text-2xl font-serif font-bold text-navy">Post-Sale Tracking</h3>
+                <p className="text-slate-500 text-sm">Monitor legal dependencies required to reach completion.</p>
+              </div>
+            </div>
+
+            <form onSubmit={handlePostSaleSubmit} className="space-y-10">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Licence to Assign */}
+                <div className="space-y-4 p-6 bg-slate-50 rounded-2xl border border-slate-100 relative group transition-all hover:shadow-md">
+                  <div className="flex items-start justify-between">
+                    <div className="p-2 bg-white rounded-xl shadow-sm border border-slate-100 text-navy group-hover:text-gold transition-colors">
+                      <FileSearch size={24} />
+                    </div>
+                    {postSaleData.licenceToAssignStatus === 'Executed' && (
+                      <div className="bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg shadow-green-500/20">
+                        <CheckCircle2 size={12} /> COMPLETE
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-navy text-lg">Licence to Assign</h4>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Formal permission from the Landlord to transfer the lease to the new buyer.
+                    </p>
+                  </div>
+                  <div className="space-y-2 mt-4">
+                    <label className="text-[10px] font-bold text-navy uppercase tracking-widest ml-1">Current Status</label>
+                    <div className="relative">
+                      <select 
+                        value={postSaleData.licenceToAssignStatus}
+                        onChange={(e) => setPostSaleData({...postSaleData, licenceToAssignStatus: e.target.value as any})}
+                        className="w-full pl-4 pr-10 py-3 bg-white border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all text-sm font-medium text-navy cursor-pointer"
+                      >
+                        <option value="Not Started">Not Started</option>
+                        <option value="Drafted by Buyer">Drafted by Buyer</option>
+                        <option value="Pending Agent Approval">Pending Agent Approval</option>
+                        <option value="Executed">Executed</option>
+                      </select>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+                  <div className="pt-2 flex items-center gap-2 text-[10px] text-slate-400 font-medium italic">
+                    <Timer size={12} />
+                    Buyer dependency. Tracked for completion.
+                  </div>
+                </div>
+
+                {/* Deed of Covenant */}
+                <div className="space-y-4 p-6 bg-slate-50 rounded-2xl border border-slate-100 relative group transition-all hover:shadow-md">
+                  <div className="flex items-start justify-between">
+                    <div className="p-2 bg-white rounded-xl shadow-sm border border-slate-100 text-navy group-hover:text-gold transition-colors">
+                      <Signature size={24} />
+                    </div>
+                    {postSaleData.deedOfCovenantStatus === 'Executed' && (
+                      <div className="bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg shadow-green-500/20">
+                        <CheckCircle2 size={12} /> COMPLETE
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-navy text-lg">Deed of Covenant</h4>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      A document where the buyer agrees directly with the Landlord to observe lease terms.
+                    </p>
+                  </div>
+                  <div className="space-y-2 mt-4">
+                    <label className="text-[10px] font-bold text-navy uppercase tracking-widest ml-1">Current Status</label>
+                    <div className="relative">
+                      <select 
+                        value={postSaleData.deedOfCovenantStatus}
+                        onChange={(e) => setPostSaleData({...postSaleData, deedOfCovenantStatus: e.target.value as any})}
+                        className="w-full pl-4 pr-10 py-3 bg-white border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-navy focus:border-transparent outline-none transition-all text-sm font-medium text-navy cursor-pointer"
+                      >
+                        <option value="Not Started">Not Started</option>
+                        <option value="Drafted by Buyer">Drafted by Buyer</option>
+                        <option value="Pending Agent Approval">Pending Agent Approval</option>
+                        <option value="Executed">Executed</option>
+                      </select>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                    </div>
+                  </div>
+                  <div className="pt-2 flex items-center gap-2 text-[10px] text-slate-400 font-medium italic">
+                    <Timer size={12} />
+                    Buyer dependency. Required before handover.
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-6">
+                <button 
+                  type="submit"
+                  disabled={updatingPostSale}
+                  className={cn(
+                    "w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg",
+                    postSaleSaveSuccess 
+                      ? "bg-green-500 text-white shadow-green-500/20" 
+                      : "bg-navy text-white hover:bg-navy-light shadow-navy/20 active:scale-[0.98]"
+                  )}
+                >
+                  {updatingPostSale ? (
+                    <Loader2 className="animate-spin" size={20} />
+                  ) : postSaleSaveSuccess ? (
+                    <CheckCircle2 size={20} />
+                  ) : (
+                    'Save Tracking Progress'
+                  )}
+                  {postSaleSaveSuccess ? 'Saved' : ''}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="bg-amber-50 border border-amber-100 p-6 rounded-2xl flex items-start gap-4 shadow-sm">
+            <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center shrink-0">
+              <AlertCircle size={24} />
+            </div>
+            <div className="space-y-1">
+              <h5 className="font-bold text-amber-900 text-sm">Solicitor Coordination</h5>
+              <p className="text-amber-800 text-xs leading-relaxed font-medium">
+                These documents are typically drafted by the Buyer's solicitor and sent to the Landlord's solicitor for approval. 
+                Keep this updated so your agent knows why the completion date is moving.
+              </p>
+            </div>
+          </div>
         </div>
       );
 

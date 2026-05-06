@@ -16,12 +16,14 @@ import {
   Zap,
   Hash,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  Settings
 } from 'lucide-react';
 import { useAuth } from './FirebaseProvider';
 import { cn } from '../lib/utils';
 import type { PropertyProfile } from '../types';
 import { searchProperties, HomedataProperty } from '../services/homedataService';
+import { DeleteConfirmationModal } from './DeleteConfirmationModal';
 
 interface PropertiesListProps {
   onPropertySelected: (id: string) => void;
@@ -33,6 +35,8 @@ export const PropertiesList: React.FC<PropertiesListProps> = ({ onPropertySelect
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+  
+  const [propertyToDelete, setPropertyToDelete] = useState<PropertyProfile | null>(null);
   
   // Manual form state
   const [manualAddress, setManualAddress] = useState({
@@ -146,8 +150,8 @@ export const PropertiesList: React.FC<PropertiesListProps> = ({ onPropertySelect
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-12">
-      <div className="max-w-5xl mx-auto space-y-12">
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 md:p-12">
+      <div className="max-w-5xl mx-auto space-y-8 md:space-y-12">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>
             <h1 className="text-4xl font-serif font-bold text-navy tracking-tight">Your Properties</h1>
@@ -226,9 +230,7 @@ export const PropertiesList: React.FC<PropertiesListProps> = ({ onPropertySelect
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (confirm('Are you sure you want to delete this property and all its files? This cannot be undone.')) {
-                                  deleteProperty(property.id);
-                                }
+                                setPropertyToDelete(property);
                                 setActiveMenu(null);
                               }}
                               className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-all"
@@ -256,8 +258,8 @@ export const PropertiesList: React.FC<PropertiesListProps> = ({ onPropertySelect
                         {property.status}
                       </span>
                       {property.uprn && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold uppercase tracking-widest">
-                          <Hash size={10} className="text-gold" />
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold uppercase tracking-widest break-all">
+                          <Hash size={10} className="text-gold flex-shrink-0" />
                           {property.uprn}
                         </span>
                       )}
@@ -459,6 +461,20 @@ export const PropertiesList: React.FC<PropertiesListProps> = ({ onPropertySelect
           </div>
         )}
       </AnimatePresence>
+      <DeleteConfirmationModal
+        isOpen={!!propertyToDelete}
+        onClose={() => setPropertyToDelete(null)}
+        onConfirm={async () => {
+          if (propertyToDelete) {
+            await deleteProperty(propertyToDelete.id);
+          }
+        }}
+        title="Delete Property"
+        description={`This will permanently remove all documents and data for ${propertyToDelete?.address}. This action cannot be undone.`}
+        confirmText="Permanently Delete"
+        requireDoubleConfirm={true}
+        doubleConfirmPhrase="DELETE"
+      />
     </div>
   );
 };
