@@ -14,8 +14,8 @@ import { calculatePrice } from '../lib/pricing';
 import { cn } from '../lib/utils';
 import type { PropertyProfile } from '../types';
 
-const PRICE_ID_MAIN = 'price_1TRZAWPhsw8zx7itaZtcYpZg';
-const PRICE_ID_UPSELL = 'price_1TRZAtPhsw8zx7it8xCrKgxP';
+const PRICE_ID_MAIN = 'price_1TRYsFPhsw8zx7it0mw16VIQ';
+const PRICE_ID_UPSELL = 'price_1TRYsrPhsw8zx7itvDUuitQ7';
 
 interface PaymentGateProps {
   property: PropertyProfile;
